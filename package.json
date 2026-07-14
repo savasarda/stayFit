@@ -4,7 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node server.mjs",
+    "start": "node server.mjs",
+    "start:prod": "powershell -NoProfile -Command \"$env:NODE_ENV='production'; node server.mjs\"",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },
@@ -17,6 +19,10 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.5",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "lucide-react": "^1.24.0",
+    "openai": "^6.46.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   }
