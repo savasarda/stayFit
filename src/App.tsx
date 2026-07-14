@@ -1,427 +1,290 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
-import {
-  Bot,
-  CalendarDays,
-  Camera,
-  ChartNoAxesColumnIncreasing,
-  Droplets,
-  Flame,
-  Plus,
-  Sparkles,
-  Utensils,
-  User,
-} from 'lucide-react'
+import type { CSSProperties, FormEvent, ReactNode } from 'react'
+import { Bell, Bot, CalendarDays, Camera, ChartNoAxesColumnIncreasing, CheckCircle2, ChevronRight, Droplets, Flame, Plus, Send, Settings, ShieldCheck, Sparkles, Trash2, Utensils, User, X } from 'lucide-react'
+import { reportException } from './lib/errorLogger'
 import './style.css'
 
-type OpenAIStatus = {
-  configured: boolean
-  model: string
-}
-
+type OpenAIStatus = { configured: boolean; model: string }
 type Tab = 'today' | 'progress' | 'assistant' | 'profile'
-
-type Meal = {
-  id: string
-  type: string
-  name: string
-  calories: number
-}
-
-const initialMeals: Meal[] = []
-
-const profile = {
-  name: '',
-  height: 0,
-  startWeight: 0,
-  currentWeight: 0,
-  targetWeight: 0,
-  dailyCalories: 0,
-  mealCount: 0,
-}
-
+type Meal = { id: string; type: string; name: string; calories: number }
+const mealTypes = ['Kahvaltı', 'Öğle yemeği', 'Akşam yemeği', 'Ara öğün'] as const
+type ChatMessage = { id: string; from: 'user' | 'assistant'; text: string }
+type MealAnalysis = { meal_name: string; total_calories: number; calorie_min: number; calorie_max: number; confidence: number; items: { name: string; portion: string; calories: number }[]; assumptions: string[]; needs_clarification: boolean; clarification_question: string }
+type DailyRecord = { meals: Meal[]; water: number }
+type DailyRecords = Record<string, DailyRecord>
+type Profile = { name: string; height: number; startWeight: number; currentWeight: number; targetWeight: number; dailyCalories: number; mealCount: number; sensitivities: string[]; reminders: string[] }
+const emptyProfile: Profile = { name: '', height: 0, startWeight: 0, currentWeight: 0, targetWeight: 0, dailyCalories: 0, mealCount: 3, sensitivities: [], reminders: [] }
 const shortDayFormatter = new Intl.DateTimeFormat('tr-TR', { weekday: 'short' })
-const headerDateFormatter = new Intl.DateTimeFormat('tr-TR', {
-  day: 'numeric',
-  month: 'long',
-  weekday: 'long',
-})
+const headerDateFormatter = new Intl.DateTimeFormat('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' })
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('today')
-  const [meals, setMeals] = useState(initialMeals)
-  const [water, setWater] = useState(0)
+  const [profile, setProfile] = useState<Profile>(() => ({ ...emptyProfile, ...readSavedValue('ai-stay-fit-profile', emptyProfile) }))
   const [selectedDate, setSelectedDate] = useState(toDateInputValue(new Date()))
+  const [dailyRecords, setDailyRecords] = useState<DailyRecords>(loadDailyRecords)
   const [lastPhotoName, setLastPhotoName] = useState('')
+  const [mealNotice, setMealNotice] = useState('')
+  const [isMealDetailOpen, setIsMealDetailOpen] = useState(false)
+  const [mealImage, setMealImage] = useState('')
+  const [mealAnalysis, setMealAnalysis] = useState<MealAnalysis | null>(null)
+  const [isAnalyzingMeal, setIsAnalyzingMeal] = useState(false)
+  const [mealAnalysisError, setMealAnalysisError] = useState('')
   const [openAIStatus, setOpenAIStatus] = useState<OpenAIStatus | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-
+  const mealNoticeTimerRef = useRef<number | null>(null)
   const selectedDateObject = useMemo(() => parseDateInputValue(selectedDate), [selectedDate])
-  const consumed = useMemo(
-    () => meals.reduce((total, meal) => total + meal.calories, 0),
-    [meals],
-  )
-  const progress =
-    profile.startWeight && profile.targetWeight
-      ? Math.round(
-          ((profile.startWeight - profile.currentWeight) / (profile.startWeight - profile.targetWeight)) * 100,
-        )
-      : 0
+  const selectedRecord = dailyRecords[selectedDate] || { meals: [], water: 0 }
+  const meals = selectedRecord.meals
+  const water = selectedRecord.water
+  const consumed = useMemo(() => meals.reduce((total, meal) => total + meal.calories, 0), [meals])
+  const progress = profile.startWeight && profile.targetWeight ? Math.round(((profile.startWeight - profile.currentWeight) / (profile.startWeight - profile.targetWeight)) * 100) : 0
 
   useEffect(() => {
-    fetch('/api/openai-status')
-      .then((response) => response.json())
-      .then((data: OpenAIStatus) => setOpenAIStatus(data))
-      .catch(() => setOpenAIStatus({ configured: false, model: 'Bilinmiyor' }))
+    fetch('/api/openai-status').then((response) => response.json()).then((data: OpenAIStatus) => setOpenAIStatus(data)).catch(() => setOpenAIStatus({ configured: false, model: 'Bilinmiyor' }))
   }, [])
 
-  function openCamera() {
-    fileInputRef.current?.click()
-  }
+  useEffect(() => {
+    writeSavedValue('ai-stay-fit-profile', profile)
+  }, [profile])
 
-  function addMealFromCamera(file: File) {
+  useEffect(() => {
+    writeSavedValue('ai-stay-fit-daily-records', dailyRecords)
+  }, [dailyRecords])
+
+  async function addMealFromCamera(file: File) {
     setLastPhotoName(file.name)
-    setMeals((current) => [
-      ...current,
-      {
-        id: crypto.randomUUID(),
-        type: 'Yeni öğün',
-        name: 'Fotoğraftan eklendi',
-        calories: 0,
-      },
-    ])
-    setActiveTab('today')
+    setIsMealDetailOpen(false)
+    setMealAnalysis(null)
+    setMealAnalysisError('')
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { setMealAnalysisError('JPG, PNG veya WEBP formatında bir fotoğraf seç.'); setMealImage(''); return }
+    if (file.size > 10 * 1024 * 1024) { setMealAnalysisError('Fotoğraf 10 MB boyutundan küçük olmalı.'); setMealImage(''); return }
+    try {
+      const image = await fileToDataUrl(file)
+      setMealImage(image)
+      await analyzeMealImage(image)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Fotoğraf okunamadı.'
+      setMealAnalysisError(message)
+      reportException({ source: 'client', severity: 'error', message, stack: error instanceof Error ? error.stack : undefined, context: { action: 'analyzeMealImage' } })
+    }
   }
 
-  return (
-    <main className="app-shell">
-      <section className="phone-shell">
-        <header className="app-header">
-          <div>
-            <p>{formatHeaderDate(selectedDateObject)}</p>
-            <h1>{activeTab === 'today' ? 'Günaydın' : pageTitle(activeTab)}</h1>
-          </div>
-          <div className="header-actions">
-            {openAIStatus?.configured ? (
-              <span className="openai-dot" aria-label="OpenAI API aktif" />
-            ) : null}
-            <button className="avatar" type="button" onClick={() => setActiveTab('profile')}>
-              <User size={20} strokeWidth={2.4} />
-            </button>
-          </div>
-        </header>
+  async function analyzeMealImage(image: string, clarification = '') {
+    setIsAnalyzingMeal(true)
+    setMealAnalysisError('')
+    try {
+      const apiResponse = await fetch('/api/analyze-meal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image, clarification }) })
+      const data = await apiResponse.json()
+      if (!apiResponse.ok) throw new Error(data.error || 'Fotoğraf analiz edilemedi.')
+      setMealAnalysis(data.analysis)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Fotoğraf analiz edilemedi.'
+      setMealAnalysisError(message)
+      reportException({ source: 'api', severity: 'error', message, stack: error instanceof Error ? error.stack : undefined, context: { action: 'analyzeMealImage' } })
+    } finally { setIsAnalyzingMeal(false) }
+  }
 
-        <div className="screen">
-          {activeTab === 'today' ? (
-            <TodayPage
-              water={water}
-              meals={meals}
-              selectedDate={selectedDate}
-              lastPhotoName={lastPhotoName}
-              onSelectDate={setSelectedDate}
-              onAddWater={() => setWater((value) => Math.min(value + 250, 5000))}
-              onAddMeal={openCamera}
-            />
-          ) : null}
-          {activeTab === 'progress' ? (
-            <ProgressPage progress={progress} consumed={consumed} water={water} meals={meals} />
-          ) : null}
-          {activeTab === 'assistant' ? <AssistantPage /> : null}
-          {activeTab === 'profile' ? <ProfilePage /> : null}
-        </div>
+  function closeMealAnalysis() { setMealImage(''); setMealAnalysis(null); setMealAnalysisError(''); setIsAnalyzingMeal(false) }
 
-        <input
-          ref={fileInputRef}
-          className="visually-hidden"
-          type="file"
-          accept="image/*"
-          capture="environment"
-          onChange={(event) => {
-            const file = event.target.files?.[0]
-            if (file) addMealFromCamera(file)
-            event.currentTarget.value = ''
-          }}
-        />
+  function saveMeal(meal: Meal) {
+    setDailyRecords((current) => {
+      const record = current[selectedDate] || { meals: [], water: 0 }
+      const updated = { ...current, [selectedDate]: { ...record, meals: [...record.meals, meal] } }
+      writeSavedValue('ai-stay-fit-daily-records', updated)
+      return updated
+    })
+    setMealNotice(`${meal.name} kaydedildi`)
+    if (mealNoticeTimerRef.current) window.clearTimeout(mealNoticeTimerRef.current)
+    mealNoticeTimerRef.current = window.setTimeout(() => setMealNotice(''), 2600)
+  }
 
-        <nav className="tab-bar" aria-label="Alt menü">
-          <TabButton
-            active={activeTab === 'today'}
-            icon={<CalendarDays size={23} strokeWidth={2.3} />}
-            label="Takvim"
-            onClick={() => setActiveTab('today')}
-          />
-          <TabButton
-            active={activeTab === 'progress'}
-            icon={<ChartNoAxesColumnIncreasing size={23} strokeWidth={2.3} />}
-            label="İlerleme"
-            onClick={() => setActiveTab('progress')}
-          />
-          <button className="camera-button" type="button" onClick={openCamera} aria-label="Kamera ile öğün ekle">
-            <Camera size={27} strokeWidth={2.4} />
-          </button>
-          <TabButton
-            active={activeTab === 'assistant'}
-            icon={<Bot size={23} strokeWidth={2.3} />}
-            label="Koç"
-            onClick={() => setActiveTab('assistant')}
-          />
-          <TabButton
-            active={activeTab === 'profile'}
-            icon={<User size={23} strokeWidth={2.3} />}
-            label="Profil"
-            onClick={() => setActiveTab('profile')}
-          />
-        </nav>
-      </section>
-    </main>
-  )
+  function addWater() {
+    setDailyRecords((current) => {
+      const record = current[selectedDate] || { meals: [], water: 0 }
+      const updated = { ...current, [selectedDate]: { ...record, water: Math.min(record.water + 250, 5000) } }
+      writeSavedValue('ai-stay-fit-daily-records', updated)
+      return updated
+    })
+  }
+
+  function removeWater() {
+    setDailyRecords((current) => {
+      const record = current[selectedDate] || { meals: [], water: 0 }
+      const updated = { ...current, [selectedDate]: { ...record, water: Math.max(record.water - 250, 0) } }
+      writeSavedValue('ai-stay-fit-daily-records', updated)
+      return updated
+    })
+  }
+
+  function deleteMeal(mealId: string) {
+    setDailyRecords((current) => {
+      const record = current[selectedDate] || { meals: [], water: 0 }
+      const updated = { ...current, [selectedDate]: { ...record, meals: record.meals.filter((meal) => meal.id !== mealId) } }
+      writeSavedValue('ai-stay-fit-daily-records', updated)
+      return updated
+    })
+  }
+
+  return <main className="app-shell"><section className="phone-shell">
+    {activeTab === 'today' ? <header className="app-header"><div><p>{formatHeaderDate(selectedDateObject)}</p><h1>Günaydın</h1></div><div className="header-actions">{openAIStatus?.configured ? <span className="ai-status" aria-label="OpenAI API aktif"><i className="openai-dot" /> <small>AI aktif</small></span> : null}<button className="avatar" type="button" onClick={() => setActiveTab('profile')} aria-label="Profili aç"><User size={20} /></button></div></header> : null}
+    <div className={activeTab === 'today' ? 'screen' : 'screen full-page'}>
+      {activeTab === 'today' ? <TodayPage profile={profile} water={water} meals={meals} dailyRecords={dailyRecords} recordedDates={new Set(Object.keys(dailyRecords).filter((date) => dailyRecords[date].water || dailyRecords[date].meals.length))} selectedDate={selectedDate} lastPhotoName={lastPhotoName} isMealDetailOpen={isMealDetailOpen} onSelectDate={setSelectedDate} onAddWater={addWater} onRemoveWater={removeWater} onOpenMealDetail={() => setIsMealDetailOpen(true)} onCloseMealDetail={() => setIsMealDetailOpen(false)} onOpenAssistant={() => setActiveTab('assistant')} onAddPhoto={() => fileInputRef.current?.click()} onAddManualMeal={(meal) => { saveMeal(meal); setIsMealDetailOpen(false) }} /> : null}
+      {activeTab === 'progress' ? <ProgressPage profile={profile} progress={progress} consumed={consumed} water={water} meals={meals} onDeleteMeal={deleteMeal} /> : null}
+      {activeTab === 'assistant' ? <AssistantPage profile={profile} meals={meals} water={water} /> : null}
+      {activeTab === 'profile' ? <ProfilePage profile={profile} onSave={setProfile} /> : null}
+    </div>
+    <input ref={fileInputRef} className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={(event) => { const file = event.target.files?.[0]; if (file) addMealFromCamera(file); event.currentTarget.value = '' }} />
+    {mealImage || isAnalyzingMeal || mealAnalysisError ? <MealAnalysisModal image={mealImage} analysis={mealAnalysis} isLoading={isAnalyzingMeal} error={mealAnalysisError} onClose={closeMealAnalysis} onRetry={(clarification) => analyzeMealImage(mealImage, clarification)} onConfirm={(name, calories, type) => { saveMeal({ id: createId(), type, name, calories }); closeMealAnalysis(); setActiveTab('today') }} /> : null}
+    {mealNotice ? <div className="meal-success-backdrop" role="presentation" onClick={() => setMealNotice('')}><section className="meal-success-popup" role="status" aria-live="polite" onClick={(event) => event.stopPropagation()}><span className="meal-success-icon"><CheckCircle2 size={34} strokeWidth={2.2} /></span><h2>Öğün kaydedildi</h2><p>{mealNotice}</p><button type="button" onClick={() => setMealNotice('')}>Tamam</button></section></div> : null}
+    <nav className="tab-bar" aria-label="Alt menü">
+      <TabButton active={activeTab === 'today'} icon={<CalendarDays size={23} />} label="Takvim" onClick={() => setActiveTab('today')} />
+      <TabButton active={activeTab === 'progress'} icon={<ChartNoAxesColumnIncreasing size={23} />} label="İlerleme" onClick={() => setActiveTab('progress')} />
+      <button className="camera-button" type="button" onClick={() => fileInputRef.current?.click()} aria-label="Kamerayla öğün ekle"><Camera size={25} strokeWidth={2.2} /></button>
+      <TabButton active={activeTab === 'assistant'} icon={<Bot size={23} />} label="Koç" onClick={() => setActiveTab('assistant')} />
+      <TabButton active={activeTab === 'profile'} icon={<User size={23} />} label="Profil" onClick={() => setActiveTab('profile')} />
+    </nav>
+  </section></main>
 }
 
-function TodayPage({
-  water,
-  meals,
-  selectedDate,
-  lastPhotoName,
-  onSelectDate,
-  onAddWater,
-  onAddMeal,
-}: {
-  water: number
-  meals: Meal[]
-  selectedDate: string
-  lastPhotoName: string
-  onSelectDate: (date: string) => void
-  onAddWater: () => void
-  onAddMeal: () => void
-}) {
-  const dateInputRef = useRef<HTMLInputElement>(null)
+function MealAnalysisModal({ image, analysis, isLoading, error, onClose, onRetry, onConfirm }: { image: string; analysis: MealAnalysis | null; isLoading: boolean; error: string; onClose: () => void; onRetry: (clarification: string) => void; onConfirm: (name: string, calories: number, type: string) => void }) {
+  const [name, setName] = useState('')
+  const [calories, setCalories] = useState('')
+  const [mealType, setMealType] = useState(suggestMealType)
+  const [clarification, setClarification] = useState('')
+  useEffect(() => { if (analysis) { setName(analysis.meal_name); setCalories(String(analysis.total_calories)) } }, [analysis])
+  const calorieValue = Number(calories)
+  const canConfirm = Boolean(analysis && name.trim() && Number.isFinite(calorieValue) && calorieValue > 0 && !isLoading)
+
+  return <div className="meal-analysis-backdrop" role="presentation"><section className="meal-analysis-modal" role="dialog" aria-modal="true" aria-labelledby="analysis-title"><header><div><p>FOTOĞRAF ANALİZİ</p><h2 id="analysis-title">Öğünü doğrula</h2></div><button type="button" onClick={onClose} aria-label="Analizi kapat"><X size={21} /></button></header>{image ? <img className="meal-analysis-image" src={image} alt="Analiz edilen öğün" /> : null}{isLoading ? <div className="analysis-loading"><span /><strong>Öğün analiz ediliyor</strong><small>İçerikler ve porsiyonlar kontrol ediliyor...</small></div> : null}{error && !isLoading ? <div className="analysis-error" role="alert"><strong>Analiz tamamlanamadı</strong><p>{error}</p><button type="button" onClick={() => onRetry(clarification)} disabled={!image}>Tekrar dene</button></div> : null}{analysis && !isLoading ? <><MealTypePicker value={mealType} onChange={setMealType} /><div className="analysis-confidence"><span><strong>%{analysis.confidence}</strong><small>Görsel güveni</small></span><div><i style={{ width: `${analysis.confidence}%` }} /></div></div><div className="analysis-edit-grid"><label><span>Öğün adı</span><input value={name} onChange={(event) => setName(event.target.value)} /></label><label><span>Kalori</span><input inputMode="numeric" type="number" min="1" value={calories} onChange={(event) => setCalories(event.target.value)} /></label></div><div className="calorie-range"><span>Tahmini aralık</span><strong>{analysis.calorie_min}–{analysis.calorie_max} kcal</strong></div><section className="analysis-items"><h3>Fotoğrafta bulunanlar</h3>{analysis.items.map((item, index) => <div key={`${item.name}-${index}`}><span><strong>{item.name}</strong><small>{item.portion}</small></span><b>{item.calories} kcal</b></div>)}</section>{analysis.assumptions.length ? <div className="analysis-assumptions"><strong>Dikkate alınan varsayımlar</strong>{analysis.assumptions.map((item) => <p key={item}>• {item}</p>)}</div> : null}{analysis.needs_clarification ? <div className="analysis-question"><strong>Daha doğru sonuç için</strong><p>{analysis.clarification_question}</p><div><input value={clarification} onChange={(event) => setClarification(event.target.value)} placeholder="Örn. 1 yemek kaşığı zeytinyağı" /><button type="button" onClick={() => onRetry(clarification)} disabled={!clarification.trim()}>Yeniden analiz et</button></div></div> : null}<p className="analysis-disclaimer">Kalori değeri fotoğraf ve verdiğin porsiyon bilgisine dayalı bir tahmindir. Kaydetmeden önce kontrol et.</p><button className="analysis-confirm" type="button" disabled={!canConfirm} onClick={() => onConfirm(name.trim(), Math.round(calorieValue), mealType)}><CheckCircle2 size={19} /> Onayla ve kaydet</button></> : null}</section></div>
+}
+
+function TodayPage({ profile, water, meals, dailyRecords, recordedDates, selectedDate, lastPhotoName, isMealDetailOpen, onSelectDate, onAddWater, onRemoveWater, onOpenMealDetail, onCloseMealDetail, onOpenAssistant, onAddPhoto, onAddManualMeal }: { profile: Profile; water: number; meals: Meal[]; dailyRecords: DailyRecords; recordedDates: Set<string>; selectedDate: string; lastPhotoName: string; isMealDetailOpen: boolean; onSelectDate: (date: string) => void; onAddWater: () => void; onRemoveWater: () => void; onOpenMealDetail: () => void; onCloseMealDetail: () => void; onOpenAssistant: () => void; onAddPhoto: () => void; onAddManualMeal: (meal: Meal) => void }) {
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false)
+  const [manualMealName, setManualMealName] = useState('')
+  const [manualMealCalories, setManualMealCalories] = useState('')
+  const [manualMealType, setManualMealType] = useState(suggestMealType)
+  const [manualMealError, setManualMealError] = useState('')
   const days = useMemo(() => buildPastDays(60), [])
   const consumed = meals.reduce((total, meal) => total + meal.calories, 0)
   const caloriesLeft = profile.dailyCalories ? Math.max(profile.dailyCalories - consumed, 0) : 0
+  const calorieProgress = profile.dailyCalories ? Math.min((consumed / profile.dailyCalories) * 100, 100) : 0
+  const waterProgress = Math.min((water / 2500) * 100, 100)
+  const mealProgress = Math.min((meals.length / Math.max(profile.mealCount || 3, 1)) * 100, 100)
 
-  function openDatePicker() {
-    const input = dateInputRef.current
-    if (!input) return
-
-    if (typeof input.showPicker === 'function') {
-      input.showPicker()
-      return
-    }
-
-    input.click()
+  function commitManualMeal() {
+    const name = manualMealName.trim()
+    const calories = Number(manualMealCalories)
+    if (!name) { setManualMealError('Öğün adını yazmalısın.'); return }
+    onAddManualMeal({ id: createId(), type: manualMealType, name, calories: Number.isFinite(calories) && calories > 0 ? Math.round(calories) : 0 })
+    setManualMealName(''); setManualMealCalories(''); setManualMealError('')
   }
 
-  return (
-    <>
-      <div className="date-toolbar">
-        <section className="date-strip" aria-label="Tarih seçimi" dir="rtl">
-          {days.map((date) => {
-            const value = toDateInputValue(date)
-            return (
-              <button
-                className={selectedDate === value ? 'date active' : 'date'}
-                key={value}
-                type="button"
-                onClick={() => onSelectDate(value)}
-                dir="ltr"
-              >
-                <span>{formatShortDay(date)}</span>
-                <strong>{date.getDate()}</strong>
-              </button>
-            )
-          })}
-        </section>
-
-        <button className="date-picker-button" type="button" onClick={openDatePicker} aria-label="Manuel tarih seç">
-          <CalendarDays size={22} strokeWidth={2.4} />
-          <input
-            ref={dateInputRef}
-            className="date-native-input"
-            type="date"
-            value={selectedDate}
-            max={toDateInputValue(new Date())}
-            onClick={(event) => event.stopPropagation()}
-            onChange={(event) => onSelectDate(event.target.value)}
-            aria-label="Tarih seç"
-          />
-        </button>
+  return <>
+    <div className="date-toolbar"><section className="date-strip" aria-label="Tarih seçimi" dir="rtl">{days.map((date) => { const value = toDateInputValue(date); return <button className={selectedDate === value ? 'date active' : 'date'} key={value} type="button" onClick={() => onSelectDate(value)} dir="ltr" aria-label={formatHeaderDate(date)}><span>{formatShortDay(date)}</span><strong>{date.getDate()}</strong>{recordedDates.has(value) ? <i className="date-data-dot" /> : null}</button> })}</section><button className="date-picker-button" type="button" onClick={() => setIsHistoryOpen(true)} aria-label="Geçmiş günleri aç"><CalendarDays size={22} /></button></div>
+    <section className="daily-hero" aria-label="Gün özeti">
+      <div className="calorie-ring" style={{ '--progress': `${calorieProgress * 3.6}deg` } as CSSProperties}>
+        <div><Flame size={18} /><strong>{caloriesLeft}</strong><span>kcal kaldı</span></div>
       </div>
-
-      <section className="daily-hero" aria-label="Gün özeti">
-        <div>
-          <p>Bugünün odağı</p>
-          <h2>{profile.dailyCalories ? `${caloriesLeft} kcal kaldı` : 'Hedef bekleniyor'}</h2>
-          <span>İlk öğününü veya profil hedefini ekle</span>
-        </div>
-        <div className="hero-metric">
-          <Flame size={22} />
-          <strong>{consumed}</strong>
-          <small>alındı</small>
-        </div>
-      </section>
-
-      <button className="tracker-card dark" type="button" onClick={onAddMeal}>
-        <span className="tracker-icon"><Utensils size={22} /></span>
-        <div>
-          <p>Öğün gir</p>
-          <strong>Kamera ile öğün ekle</strong>
-          <small>{lastPhotoName || (meals.length ? `${meals.length} öğün kaydı var` : 'Henüz öğün yok')}</small>
-        </div>
-        <Plus size={18} />
-      </button>
-
-      <button className="tracker-card water" type="button" onClick={onAddWater}>
-        <span className="tracker-icon"><Droplets size={22} /></span>
-        <div>
-          <p>Su gir</p>
-          <strong>{(water / 1000).toFixed(1)} / 2.5 L</strong>
-          <div className="water-progress">
-            <span style={{ width: `${Math.min((water / 2500) * 100, 100)}%` }} />
-          </div>
-        </div>
-        <b>+250 ml</b>
-      </button>
-    </>
-  )
-}
-
-function ProgressPage({
-  progress,
-  consumed,
-  water,
-  meals,
-}: {
-  progress: number
-  consumed: number
-  water: number
-  meals: Meal[]
-}) {
-  return (
-    <section className="page-stack">
-      <div className="progress-hero">
-        <p>Güncel kilon</p>
-        <h2>{profile.currentWeight ? profile.currentWeight : '--'} <span>kg</span></h2>
-        <div className="goal-track"><span style={{ width: `${progress}%` }} /></div>
-        <div className="goal-labels">
-          <small>{profile.startWeight ? `${profile.startWeight} kg başlangıç` : 'Başlangıç yok'}</small>
-          <small>{profile.targetWeight ? `${profile.targetWeight} kg hedef` : 'Hedef yok'}</small>
-        </div>
-      </div>
-
-      <div className="stat-grid">
-        <div><strong>--</strong><span>Verilen</span></div>
-        <div><strong>--</strong><span>Kalan</span></div>
-        <div><strong>{progress}%</strong><span>Tamamlandı</span></div>
-      </div>
-
-      <section className="detail-panel">
-        <div className="section-title">
-          <h2>Gün detayları</h2>
-          <span>{meals.length} kayıt</span>
-        </div>
-        <div className="detail-row"><span>Kalori</span><strong>{consumed} / {profile.dailyCalories || '--'} kcal</strong></div>
-        <div className="detail-row"><span>Su</span><strong>{(water / 1000).toFixed(1)} / 2.5 L</strong></div>
-        {meals.map((meal) => (
-          <article className="meal-card" key={meal.id}>
-            <div>
-              <p>{meal.type}</p>
-              <h3>{meal.name}</h3>
-            </div>
-            <strong>{meal.calories ? `${meal.calories} kcal` : 'Analiz bekliyor'}</strong>
-          </article>
-        ))}
-        {meals.length === 0 ? <p className="empty-state">Bugün için henüz öğün kaydı yok.</p> : null}
-      </section>
-    </section>
-  )
-}
-
-function AssistantPage() {
-  return (
-    <section className="page-stack">
-      <div className="coach-message">
-        <Sparkles size={22} />
-        <p>Merhaba. Bugün öğün, su ve kalori durumuna göre öneri alabilirsin.</p>
-      </div>
-      <button className="primary-action" type="button">AI önerisi al</button>
-    </section>
-  )
-}
-
-function ProfilePage() {
-  return (
-    <section className="page-stack">
-      <div className="profile-card">
-        <div className="large-avatar"><User size={30} strokeWidth={2.4} /></div>
-        <h2>Profilini tamamla</h2>
-        <p>Hedeflerini eklediğinde takip ekranı kişiselleşir</p>
-      </div>
-      <div className="profile-list">
-        <ProfileRow label="Günlük öğün" value={profile.mealCount ? `${profile.mealCount} öğün` : '--'} />
-        <ProfileRow label="Kalori hedefi" value={profile.dailyCalories ? `${profile.dailyCalories} kcal` : '--'} />
-        <ProfileRow label="Boy" value={profile.height ? `${profile.height} cm` : '--'} />
+      <div className="daily-hero-copy"><p>GÜNLÜK HEDEF</p><h2>{consumed} <span>/ {profile.dailyCalories || '--'} kcal</span></h2><small>{profile.dailyCalories ? 'Bugünkü enerji dengen' : 'Profilinden kalori hedefi belirle'}</small></div>
+      <div className="daily-mini-stats">
+        <div><span className="mini-stat-ring coral" style={{ '--progress': `${mealProgress * 3.6}deg` } as CSSProperties}><Utensils size={14} /></span><strong>{meals.length}/{profile.mealCount || 3}</strong><small>Öğün</small></div>
+        <div><span className="mini-stat-ring blue" style={{ '--progress': `${waterProgress * 3.6}deg` } as CSSProperties}><Droplets size={14} /></span><strong>{(water / 1000).toFixed(1)} L</strong><small>Su</small></div>
+        <div><span className="mini-stat-ring green" style={{ '--progress': `${calorieProgress * 3.6}deg` } as CSSProperties}><Flame size={14} /></span><strong>{Math.round(calorieProgress)}%</strong><small>Hedef</small></div>
       </div>
     </section>
-  )
+    <button className="tracker-card meal-entry" type="button" onClick={onOpenMealDetail} aria-haspopup="dialog"><span className="tracker-icon"><Utensils size={22} /></span><div><p>Beslenme</p><strong>Öğün gir</strong><small>{meals.length ? `${meals.length} öğün kaydedildi` : 'Fotoğrafla veya manuel ekle'}</small></div><span className="meal-entry-plus"><Plus size={20} /></span></button>
+    {isMealDetailOpen ? <div className="meal-sheet-backdrop" role="presentation" onClick={onCloseMealDetail}><section className="meal-sheet" role="dialog" aria-modal="true" aria-labelledby="meal-sheet-title" onClick={(event) => event.stopPropagation()}><div className="meal-sheet-handle" /><header className="meal-sheet-header"><div><p>Yeni kayıt</p><h2 id="meal-sheet-title">Öğün ekle</h2></div><button className="sheet-close" type="button" onClick={onCloseMealDetail} aria-label="Öğün panelini kapat"><X size={20} /></button></header><MealTypePicker value={manualMealType} onChange={setManualMealType} /><button className="photo-action" type="button" onClick={onAddPhoto}><span className="sheet-option-icon"><Camera size={22} /></span><span><strong>Fotoğrafla ekle</strong><small>{lastPhotoName || 'Kamera veya galeriden seç'}</small></span></button><div className="detail-divider"><span>Manuel giriş</span></div><form className="manual-meal-form" onSubmit={(event) => { event.preventDefault(); commitManualMeal() }}><label><span>Ne yedin?</span><input autoFocus value={manualMealName} onChange={(event) => { setManualMealName(event.target.value); setManualMealError('') }} placeholder="Örn. Tavuklu salata" /></label><label><span>Kalori <small>(isteğe bağlı)</small></span><input inputMode="numeric" min="0" type="number" value={manualMealCalories} onChange={(event) => setManualMealCalories(event.target.value)} placeholder="0" /></label>{manualMealError ? <p className="meal-form-error" role="alert">{manualMealError}</p> : null}<button className="primary-action compact" type="button" onClick={commitManualMeal}><Plus size={18} /> Öğünü kaydet</button></form></section></div> : null}
+    <section className="today-meals" aria-label="Seçili günün öğünleri"><div className="section-title"><h2>Günün öğünleri</h2><span>{meals.length} kayıt</span></div>{meals.map((meal) => <MealCard key={meal.id} meal={meal} />)}{!meals.length ? <p className="empty-state">Bu tarihte öğün kaydı yok.</p> : null}</section>
+    <section className="tracker-card water" aria-label="Su takibi"><span className="tracker-icon"><Droplets size={22} /></span><div className="water-summary"><p>Su takibi</p><strong>{(water / 1000).toFixed(1)} / 2.5 L</strong><div className="water-progress"><span style={{ width: `${Math.min((water / 2500) * 100, 100)}%` }} /></div></div><div className="water-actions"><button type="button" onClick={onRemoveWater} disabled={water === 0} aria-label="250 mililitre su azalt">−</button><button type="button" onClick={onAddWater} aria-label="250 mililitre su ekle">+</button><small>250 ml</small></div></section>
+    <button className="food-advisor-card" type="button" onClick={onOpenAssistant}><span className="food-advisor-icon"><Sparkles size={21} /></span><span><strong>Ne yesem?</strong><small>Hedefine ve bugünkü kayıtlarına göre öneri al</small></span><ChevronRight size={20} /></button>
+    {isHistoryOpen ? <HistorySheet dailyRecords={dailyRecords} selectedDate={selectedDate} onClose={() => setIsHistoryOpen(false)} onSelect={(date) => { onSelectDate(date); setIsHistoryOpen(false) }} /> : null}
+  </>
 }
 
-function ProfileRow({ label, value }: { label: string; value: string }) {
-  return <div className="profile-row"><span>{label}</span><strong>{value}</strong></div>
+function ProgressPage({ profile, progress, consumed, water, meals, onDeleteMeal }: { profile: Profile; progress: number; consumed: number; water: number; meals: Meal[]; onDeleteMeal: (mealId: string) => void }) {
+  const [mealToDelete, setMealToDelete] = useState<Meal | null>(null)
+  return <section className="page-stack"><div className="progress-hero"><p>Güncel kilon</p><h2>{profile.currentWeight || '--'} <span>kg</span></h2><div className="goal-track"><span style={{ width: `${Math.max(0, Math.min(progress, 100))}%` }} /></div><div className="goal-labels"><small>{profile.startWeight ? `${profile.startWeight} kg başlangıç` : 'Başlangıç yok'}</small><small>{profile.targetWeight ? `${profile.targetWeight} kg hedef` : 'Hedef yok'}</small></div></div><div className="stat-grid"><div><strong>{profile.startWeight && profile.currentWeight ? `${Math.max(profile.startWeight - profile.currentWeight, 0).toFixed(1)}` : '--'}</strong><span>Verilen</span></div><div><strong>{profile.currentWeight && profile.targetWeight ? `${Math.max(profile.currentWeight - profile.targetWeight, 0).toFixed(1)}` : '--'}</strong><span>Kalan</span></div><div><strong>{Math.max(0, Math.min(progress, 100))}%</strong><span>Tamamlandı</span></div></div><section className="detail-panel"><div className="section-title"><h2>Gün detayları</h2><span>{meals.length} kayıt</span></div><div className="detail-row"><span>Kalori</span><strong>{consumed} / {profile.dailyCalories || '--'} kcal</strong></div><div className="detail-row"><span>Su</span><strong>{(water / 1000).toFixed(1)} / 2.5 L</strong></div>{meals.map((meal) => <MealCard key={meal.id} meal={meal} onDelete={() => setMealToDelete(meal)} />)}{!meals.length ? <p className="empty-state">Bugün için henüz öğün kaydı yok.</p> : null}</section>{mealToDelete ? <div className="delete-meal-backdrop" role="presentation" onClick={() => setMealToDelete(null)}><section className="delete-meal-popup" role="dialog" aria-modal="true" aria-labelledby="delete-meal-title" onClick={(event) => event.stopPropagation()}><span><Trash2 size={28} /></span><h2 id="delete-meal-title">Öğün silinsin mi?</h2><p><strong>{mealToDelete.name}</strong> seçili günün kayıtlarından kaldırılacak.</p><div><button type="button" onClick={() => setMealToDelete(null)}>Vazgeç</button><button type="button" onClick={() => { onDeleteMeal(mealToDelete.id); setMealToDelete(null) }}><Trash2 size={17} /> Öğünü sil</button></div></section></div> : null}</section>
 }
 
-function TabButton({
-  active,
-  icon,
-  label,
-  onClick,
-}: {
-  active: boolean
-  icon: ReactNode
-  label: string
-  onClick: () => void
-}) {
-  return (
-    <button className={active ? 'tab active' : 'tab'} type="button" onClick={onClick}>
-      <span>{icon}</span>
-      {label}
-    </button>
-  )
+function AssistantPage({ profile, meals, water }: { profile: Profile; meals: Meal[]; water: number }) {
+  const [message, setMessage] = useState('')
+  const [messages, setMessages] = useState<ChatMessage[]>([{ id: 'welcome', from: 'assistant', text: 'Bugünkü öğünlerin, su tüketimin ve hedeflerine göre sana uygun seçenekler sunabilirim. Ne yemek istediğini söylemen yeterli.' }])
+  const [error, setError] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
+
+  async function sendMessage(text = message) {
+    const question = text.trim()
+    if (!question || isLoading) return
+    const userMessage: ChatMessage = { id: createId(), from: 'user', text: question }
+    const conversation = [...messages, userMessage]
+    setMessages(conversation)
+    setMessage('')
+    setIsLoading(true)
+    setError('')
+    try {
+      const recentConversation = conversation.slice(-6).map((item) => `${item.from === 'user' ? 'Kullanıcı' : 'Asistan'}: ${item.text}`).join('\n')
+      const response = await fetch('/api/ai-coach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: `${recentConversation}\n\nSon isteğe 3 uygulanabilir yemek seçeneğiyle yanıt ver.`, profile: { ...profile, meals, water } }) })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'AI koç yanıt veremedi.')
+      setMessages((current) => [...current, { id: createId(), from: 'assistant', text: data.answer || 'Yanıt alınamadı.' }])
+    } catch (requestError) {
+      const errorMessage = requestError instanceof Error ? requestError.message : 'AI koç yanıt veremedi.'
+      setError(errorMessage)
+      reportException({ source: 'api', severity: 'error', message: errorMessage, stack: requestError instanceof Error ? requestError.stack : undefined, context: { action: 'askCoach' } })
+    } finally { setIsLoading(false) }
+  }
+
+  return <section className="assistant-page"><div className="assistant-heading"><div><p>STAYFIT ASİSTAN</p><h2>Ne yesem?</h2></div><span><i /> Hazır</span></div><div className="suggestion-row"><button type="button" onClick={() => sendMessage('Akşam için hafif ve doyurucu ne yiyebilirim?')}>Akşam önerisi</button><button type="button" onClick={() => sendMessage('Protein ağırlıklı üç öğün öner')}>Protein ağırlıklı</button></div><div className="chat-messages" aria-live="polite">{messages.map((item) => <article className={item.from === 'user' ? 'chat-bubble user' : 'chat-bubble assistant'} key={item.id}>{item.text}</article>)}{isLoading ? <article className="chat-bubble assistant loading">Öneriler hazırlanıyor...</article> : null}</div>{error ? <div className="form-error" role="alert">{error}</div> : null}<form className="chat-compose" onSubmit={(event) => { event.preventDefault(); void sendMessage() }}><input aria-label="Asistana mesaj" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Bir şey sor..." /><button type="submit" disabled={!message.trim() || isLoading} aria-label="Mesaj gönder"><Send size={19} /></button></form></section>
 }
 
-function buildPastDays(count: number) {
-  const today = new Date()
-  return Array.from({ length: count }, (_, index) => {
-    const date = new Date(today)
-    date.setDate(today.getDate() - index)
-    return date
-  })
+function HistorySheet({ dailyRecords, selectedDate, onClose, onSelect }: { dailyRecords: DailyRecords; selectedDate: string; onClose: () => void; onSelect: (date: string) => void }) {
+  return <div className="history-backdrop" role="presentation" onClick={onClose}><section className="history-sheet" role="dialog" aria-modal="true" aria-labelledby="history-title" onClick={(event) => event.stopPropagation()}><div className="meal-sheet-handle" /><header className="history-header"><div><h2 id="history-title">Geçmiş günler</h2><p>Son 90 günün kayıtlarını görüntüle</p></div><button type="button" onClick={onClose} aria-label="Geçmiş günleri kapat"><X size={24} /></button></header><div className="history-list">{buildPastDays(90).map((date) => { const key = toDateInputValue(date); const day = dailyRecords[key]; const calories = day?.meals.reduce((sum, meal) => sum + meal.calories, 0) || 0; return <button className={key === selectedDate ? 'history-row active' : 'history-row'} type="button" key={key} onClick={() => onSelect(key)}><span className="history-day">{date.getDate()}</span><span><strong>{formatLongDate(date)}</strong><small>{day ? `${day.meals.length} öğün · ${calories} kcal · ${(day.water / 1000).toFixed(1)} L su` : 'Kayıt bulunmuyor'}</small></span><ChevronRight size={18} /></button> })}</div></section></div>
 }
 
-function toDateInputValue(date: Date) {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
+function ProfilePage({ profile, onSave }: { profile: Profile; onSave: (profile: Profile) => void }) {
+  type SettingsSection = 'general' | 'mealCount' | 'calories' | 'sensitivities' | 'reminders'
+  const sensitivityOptions = ['Gluten', 'Laktoz', 'Yumurta', 'Soya', 'Yer fıstığı', 'Deniz ürünleri']
+  const reminderOptions = ['Su içme', 'Öğün zamanı', 'Haftalık tartılma']
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null)
+  const [form, setForm] = useState({ name: profile.name, height: String(profile.height || ''), startWeight: String(profile.startWeight || ''), currentWeight: String(profile.currentWeight || ''), targetWeight: String(profile.targetWeight || ''), dailyCalories: String(profile.dailyCalories || ''), mealCount: String(profile.mealCount || 3) })
+  const [selectedSensitivities, setSelectedSensitivities] = useState(profile.sensitivities.filter((item) => sensitivityOptions.includes(item)))
+  const [customSensitivity, setCustomSensitivity] = useState(profile.sensitivities.filter((item) => !sensitivityOptions.includes(item)).join(', '))
+  const [selectedReminders, setSelectedReminders] = useState(profile.reminders || [])
+  const displayName = profile.name || 'Profil'
+  const bmi = profile.height && profile.currentWeight ? profile.currentWeight / Math.pow(profile.height / 100, 2) : 0
+  function update(field: keyof typeof form, value: string) { setForm((current) => ({ ...current, [field]: value })) }
+  function toggleItem(item: string, selected: string[], setSelected: (value: string[]) => void) { setSelected(selected.includes(item) ? selected.filter((value) => value !== item) : [...selected, item]) }
+  function saveProfile(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const manualSensitivities = customSensitivity.split(',').map((item) => item.trim()).filter(Boolean); onSave({ name: form.name.trim(), height: Number(form.height) || 0, startWeight: Number(form.startWeight) || 0, currentWeight: Number(form.currentWeight) || 0, targetWeight: Number(form.targetWeight) || 0, dailyCalories: Number(form.dailyCalories) || 0, mealCount: Number(form.mealCount) || 3, sensitivities: [...new Set([...selectedSensitivities, ...manualSensitivities])], reminders: selectedReminders }); setSettingsSection(null) }
+  const sectionTitle: Record<SettingsSection, [string, string]> = { general: ['Profil ayarları', 'Kişisel bilgilerini ve hedeflerini güncelle'], mealCount: ['Günlük öğün', 'Gün içinde kaç öğün planlamak istersin?'], calories: ['Kalori hedefi', 'Günlük kalori hedefini belirle'], sensitivities: ['Hassasiyetler', 'Sana uygun olmayan besinleri seç'], reminders: ['Hatırlatıcılar', 'Almak istediğin bildirimleri seç'] }
+  return <section className="profile-page"><div className="profile-page-title"><div><p>HESABIN</p><h2>Profil</h2></div><button type="button" onClick={() => setSettingsSection('general')} aria-label="Profil ayarlarını aç"><Settings size={21} /></button></div><div className="profile-identity"><div className="profile-avatar-letter">{displayName[0].toLocaleUpperCase('tr-TR')}</div><h3>{displayName}</h3><p>{profile.targetWeight ? `${profile.targetWeight} kg hedefine doğru ilerliyorsun` : 'Hedefini belirleyerek takibe başla'}</p></div><div className="profile-metrics"><div><strong>{profile.height || '--'}</strong><span>Boy · cm</span></div><div><strong>{profile.currentWeight || profile.startWeight || '--'}</strong><span>Kilo · kg</span></div><div><strong>{bmi ? bmi.toFixed(1) : '--'}</strong><span>BMI</span></div></div><h3 className="profile-plan-title">Planın</h3><div className="profile-plan-list"><ProfilePlanRow icon={<Utensils size={20} />} label="Günlük öğün" value={`${profile.mealCount || 3} öğün`} onClick={() => setSettingsSection('mealCount')} /><ProfilePlanRow icon={<Flame size={20} />} label="Kalori hedefi" value={profile.dailyCalories ? `${profile.dailyCalories} kcal` : 'Belirlenmedi'} onClick={() => setSettingsSection('calories')} /><ProfilePlanRow icon={<ShieldCheck size={20} />} label="Hassasiyetler" value={profile.sensitivities.length ? profile.sensitivities.join(', ') : 'Bulunmuyor'} onClick={() => setSettingsSection('sensitivities')} /><ProfilePlanRow icon={<Bell size={20} />} label="Hatırlatıcılar" value={profile.reminders?.length ? profile.reminders.join(', ') : 'Kapalı'} onClick={() => setSettingsSection('reminders')} /></div><div className="plus-banner"><span><Sparkles size={20} /></span><div><strong>StayFit Plus</strong><small>Kişisel analizler ve sınırsız asistan</small></div><ChevronRight size={20} /></div>{settingsSection ? <div className="profile-settings-backdrop" role="presentation" onClick={() => setSettingsSection(null)}><form className="profile-settings-sheet" onSubmit={saveProfile} onClick={(event) => event.stopPropagation()}><div className="meal-sheet-handle" /><header><div><h2>{sectionTitle[settingsSection][0]}</h2><p>{sectionTitle[settingsSection][1]}</p></div><button type="button" onClick={() => setSettingsSection(null)} aria-label="Profil ayarlarını kapat"><X size={22} /></button></header>{settingsSection === 'general' ? <div className="goal-form-grid"><label><span>Adın</span><input value={form.name} onChange={(event) => update('name', event.target.value)} placeholder="Adını yaz" /></label><label><span>Boy</span><input type="number" value={form.height} onChange={(event) => update('height', event.target.value)} placeholder="cm" /></label><label><span>Başlangıç kilosu</span><input type="number" step="0.1" value={form.startWeight} onChange={(event) => update('startWeight', event.target.value)} placeholder="kg" /></label><label><span>Güncel kilo</span><input type="number" step="0.1" value={form.currentWeight} onChange={(event) => update('currentWeight', event.target.value)} placeholder="kg" /></label><label><span>Hedef kilo</span><input type="number" step="0.1" value={form.targetWeight} onChange={(event) => update('targetWeight', event.target.value)} placeholder="kg" /></label></div> : null}{settingsSection === 'mealCount' ? <div className="settings-choice-grid meal-count-choices">{['2', '3', '4', '5'].map((count) => <button className={form.mealCount === count ? 'selected' : ''} type="button" key={count} onClick={() => update('mealCount', count)}><strong>{count}</strong><span>öğün</span></button>)}</div> : null}{settingsSection === 'calories' ? <div className="single-setting-field"><label><span>Günlük kalori hedefi</span><input autoFocus type="number" value={form.dailyCalories} onChange={(event) => update('dailyCalories', event.target.value)} placeholder="Örn. 1800" /></label><small>Bu değer günlük kalori özetinde kullanılacak.</small></div> : null}{settingsSection === 'sensitivities' ? <div className="sensitivity-settings"><div className="settings-choice-grid">{sensitivityOptions.map((item) => <button className={selectedSensitivities.includes(item) ? 'selected' : ''} type="button" key={item} onClick={() => toggleItem(item, selectedSensitivities, setSelectedSensitivities)}>{item}</button>)}</div><label className="manual-sensitivity"><span>Başka bir hassasiyet</span><textarea value={customSensitivity} onChange={(event) => setCustomSensitivity(event.target.value)} placeholder="Manuel olarak yaz. Birden fazlaysa virgülle ayır." rows={3} /></label></div> : null}{settingsSection === 'reminders' ? <div className="reminder-settings">{reminderOptions.map((item) => <button className={selectedReminders.includes(item) ? 'selected' : ''} type="button" key={item} onClick={() => toggleItem(item, selectedReminders, setSelectedReminders)}><span>{item}</span><i /></button>)}</div> : null}<button className="primary-action" type="submit">Değişiklikleri kaydet</button></form></div> : null}</section>
 }
 
-function parseDateInputValue(value: string) {
-  const [year, month, day] = value.split('-').map(Number)
-  return new Date(year, month - 1, day)
-}
+function ProfilePlanRow({ icon, label, value, onClick }: { icon: ReactNode; label: string; value: string; onClick: () => void }) { return <button type="button" onClick={onClick}><span className="profile-plan-icon">{icon}</span><span><strong>{label}</strong><small>{value}</small></span><ChevronRight size={19} /></button> }
+function MealTypePicker({ value, onChange }: { value: string; onChange: (value: string) => void }) { return <fieldset className="meal-type-picker"><legend>Hangi öğün?</legend><div>{mealTypes.map((type) => <button className={value === type ? 'selected' : ''} type="button" key={type} onClick={() => onChange(type)}>{type}</button>)}</div></fieldset> }
+function MealCard({ meal, onDelete }: { meal: Meal; onDelete?: () => void }) { return <article className="meal-card"><div><p>{meal.type}</p><h3>{meal.name}</h3></div><span className="meal-card-actions"><strong>{meal.calories ? `${meal.calories} kcal` : 'Kalori girilmedi'}</strong>{onDelete ? <button type="button" onClick={onDelete} aria-label={`${meal.name} öğününü sil`} title="Öğünü sil"><Trash2 size={17} /></button> : null}</span></article> }
+function TabButton({ active, icon, label, onClick }: { active: boolean; icon: ReactNode; label: string; onClick: () => void }) { return <button className={active ? 'tab active' : 'tab'} type="button" onClick={onClick} aria-current={active ? 'page' : undefined}><span>{icon}</span>{label}</button> }
+function buildPastDays(count: number) { const today = new Date(); return Array.from({ length: count }, (_, index) => { const date = new Date(today); date.setDate(today.getDate() - index); return date }) }
+function toDateInputValue(date: Date) { const year = date.getFullYear(); const month = String(date.getMonth() + 1).padStart(2, '0'); const day = String(date.getDate()).padStart(2, '0'); return `${year}-${month}-${day}` }
+function parseDateInputValue(value: string) { const [year, month, day] = value.split('-').map(Number); return new Date(year, month - 1, day) }
+function formatHeaderDate(date: Date) { return headerDateFormatter.format(date).toLocaleUpperCase('tr-TR') }
+function formatShortDay(date: Date) { return shortDayFormatter.format(date).slice(0, 2).toLocaleUpperCase('tr-TR') }
+function formatLongDate(date: Date) { const value = date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' }); return value.charAt(0).toLocaleUpperCase('tr-TR') + value.slice(1) }
+function readSavedValue<T>(key: string, fallback: T): T { try { const value = localStorage.getItem(key); return value ? JSON.parse(value) as T : fallback } catch { return fallback } }
+function loadDailyRecords(): DailyRecords {
+  const existing = readSavedValue<DailyRecords>('ai-stay-fit-daily-records', {})
+  if (Object.keys(existing).length) return existing
 
-function formatHeaderDate(date: Date) {
-  return headerDateFormatter.format(date).toLocaleUpperCase('tr-TR')
-}
+  const oldMeals = readSavedValue<Meal[]>('ai-stay-fit-meals', [])
+  const oldWater = readSavedValue<number>('ai-stay-fit-water', 0)
+  if (!oldMeals.length && !oldWater) return {}
 
-function formatShortDay(date: Date) {
-  return shortDayFormatter.format(date).slice(0, 2).toLocaleUpperCase('tr-TR')
+  return { [toDateInputValue(new Date())]: { meals: oldMeals, water: oldWater } }
 }
-
-function pageTitle(tab: Tab) {
-  if (tab === 'progress') return 'İlerleme'
-  if (tab === 'assistant') return 'AI Koç'
-  if (tab === 'profile') return 'Profil'
-  return 'Bugün'
+function writeSavedValue(key: string, value: unknown) { try { localStorage.setItem(key, JSON.stringify(value)); return true } catch (error) { reportException({ source: 'client', severity: 'error', message: 'Cihaz depolamasına yazılamadı', stack: error instanceof Error ? error.stack : undefined, context: { storageKey: key } }); return false } }
+function createId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
-
+function suggestMealType() { const hour = new Date().getHours(); if (hour < 11) return 'Kahvaltı'; if (hour < 15) return 'Öğle yemeği'; if (hour < 18) return 'Ara öğün'; return 'Akşam yemeği' }
+function fileToDataUrl(file: File) { return new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Fotoğraf okunamadı.')); reader.onerror = () => reject(new Error('Fotoğraf okunamadı.')); reader.readAsDataURL(file) }) }
 export default App
