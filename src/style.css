@@ -2095,15 +2095,7 @@ button { font: inherit; }
 }
 
 .settings-sign-out-button {
-  width: 100%;
-  min-height: 46px;
-  margin-top: 10px;
-  border: 1px solid #f0cfc6;
-  border-radius: 11px;
-  color: #873e31;
-  background: #fff4f0;
-  font-weight: 850;
-  cursor: pointer;
+  display: none;
 }
 
 .reminder-settings {
@@ -3050,7 +3042,49 @@ body { background: #f6f7f4; }
   .onboarding-sensitivities div { grid-template-columns: repeat(2, 1fr); }
 }
 
-.sign-out-button { width: 100%; min-height: 48px; margin-top: 14px; border: 1px solid #e4e7e2; border-radius: 12px; color: #6e7571; background: #f7f8f6; font-weight: 800; cursor: pointer; }
+.sign-out-button { width: 100%; min-height: 50px; margin-top: 18px; border: 1px solid #efb7ad; border-radius: 13px; color: #b33728; background: #fff1ee; font-weight: 850; cursor: pointer; transition: transform 160ms ease, background 160ms ease; }
+.sign-out-button:hover { background: #ffe6e1; }
+.sign-out-button:active { transform: scale(0.985); }
+
+.sign-out-confirm-backdrop {
+  position: absolute;
+  z-index: 80;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(20, 24, 21, 0.48);
+  backdrop-filter: blur(10px);
+  animation: success-backdrop-in 180ms ease-out;
+}
+
+.sign-out-confirm-popup {
+  width: min(100%, 360px);
+  padding: 26px 22px 20px;
+  border: 1px solid rgba(255, 255, 255, 0.74);
+  border-radius: 24px;
+  background: #ffffff;
+  box-shadow: 0 28px 80px rgba(25, 30, 27, 0.25);
+  text-align: center;
+}
+
+.sign-out-confirm-icon {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  margin: 0 auto 16px;
+  border-radius: 19px;
+  color: #b33728;
+  background: #fff0ed;
+}
+
+.sign-out-confirm-popup h2 { margin: 0; color: #202521; font-size: 21px; line-height: 1.25; }
+.sign-out-confirm-popup p { margin: 10px auto 22px; color: #747b77; font-size: 13px; line-height: 1.55; }
+.sign-out-confirm-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.sign-out-confirm-actions button { min-height: 48px; border-radius: 12px; font-weight: 850; cursor: pointer; }
+.sign-out-confirm-actions .cancel { border: 1px solid #e4e7e2; color: #4f5752; background: #f6f7f5; }
+.sign-out-confirm-actions .confirm { border: 1px solid #c94736; color: #ffffff; background: #c94736; }
 
 .data-error-toast { position: absolute; left: 16px; right: 16px; bottom: 96px; z-index: 65; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 13px; border: 1px solid #f0cfc6; border-radius: 13px; color: #873e31; background: #fff4f0; box-shadow: 0 14px 34px rgba(80, 38, 28, 0.15); font-size: 11px; font-weight: 750; }
 .data-error-toast button { display: grid; place-items: center; width: 28px; height: 28px; flex: 0 0 auto; border: 0; border-radius: 50%; color: #873e31; background: #f7ddd6; cursor: pointer; }

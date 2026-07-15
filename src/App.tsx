@@ -28,12 +28,14 @@ function App() {
   const [isDataReady, setIsDataReady] = useState(!shouldUseSupabase)
   const [dataError, setDataError] = useState('')
   const [activeTab, setActiveTab] = useState<Tab>('today')
+  const [greeting, setGreeting] = useState(() => getGreetingForHour(new Date().getHours()))
   const [profile, setProfile] = useState<Profile>(() => ({ ...emptyProfile, ...readSavedValue('ai-stay-fit-profile', emptyProfile) }))
   const [selectedDate, setSelectedDate] = useState(toDateInputValue(new Date()))
   const [dailyRecords, setDailyRecords] = useState<DailyRecords>(loadDailyRecords)
   const [assistantMessages, setAssistantMessages] = useState<ChatMessage[]>(() => readSavedValue<ChatMessage[]>('ai-stay-fit-assistant-messages', []))
   const [lastPhotoName, setLastPhotoName] = useState('')
   const [mealNotice, setMealNotice] = useState('')
+  const [isSignOutConfirmOpen, setIsSignOutConfirmOpen] = useState(false)
   const [isMealDetailOpen, setIsMealDetailOpen] = useState(false)
   const [mealImage, setMealImage] = useState('')
   const [mealAnalysis, setMealAnalysis] = useState<MealAnalysis | null>(null)
@@ -52,6 +54,12 @@ function App() {
 
   useEffect(() => {
     fetch('/api/openai-status').then((response) => response.json()).then((data: OpenAIStatus) => setOpenAIStatus(data)).catch(() => setOpenAIStatus({ configured: false, model: 'Bilinmiyor' }))
+  }, [])
+
+  useEffect(() => {
+    const updateGreeting = () => setGreeting(getGreetingForHour(new Date().getHours()))
+    const timer = window.setInterval(updateGreeting, 60_000)
+    return () => window.clearInterval(timer)
   }, [])
 
   useEffect(() => {
@@ -212,17 +220,18 @@ function App() {
   if (!isProfileComplete(profile)) return <OnboardingPage profile={profile} onSave={updateProfile} onSignOut={session ? () => void supabase?.auth.signOut() : undefined} />
 
   return <main className="app-shell"><section className="phone-shell">
-    {activeTab === 'today' ? <header className="app-header"><div><p>{formatHeaderDate(selectedDateObject)}</p><h1>Günaydın</h1></div><div className="header-actions">{openAIStatus?.configured ? <span className="ai-status" aria-label="OpenAI API aktif"><i className="openai-dot" /> <small>AI aktif</small></span> : null}<button className="avatar" type="button" onClick={() => setActiveTab('profile')} aria-label="Profili aç"><User size={20} /></button></div></header> : null}
+    {activeTab === 'today' ? <header className="app-header"><div><p>{formatHeaderDate(selectedDateObject)}</p><h1>{greeting}</h1></div><div className="header-actions">{openAIStatus?.configured ? <span className="ai-status" aria-label="OpenAI API aktif"><i className="openai-dot" /> <small>AI aktif</small></span> : null}<button className="avatar" type="button" onClick={() => setActiveTab('profile')} aria-label="Profili aç"><User size={20} /></button></div></header> : null}
     <div className={activeTab === 'today' ? 'screen' : `screen full-page${activeTab === 'assistant' ? ' assistant-screen' : ''}`}>
       {activeTab === 'today' ? <TodayPage profile={profile} water={water} meals={meals} dailyRecords={dailyRecords} recordedDates={new Set(Object.keys(dailyRecords).filter((date) => dailyRecords[date].water || dailyRecords[date].meals.length))} selectedDate={selectedDate} lastPhotoName={lastPhotoName} isMealDetailOpen={isMealDetailOpen} onSelectDate={setSelectedDate} onAddWater={addWater} onRemoveWater={removeWater} onOpenMealDetail={() => setIsMealDetailOpen(true)} onCloseMealDetail={() => setIsMealDetailOpen(false)} onOpenAssistant={() => setActiveTab('assistant')} onOpenCamera={() => cameraInputRef.current?.click()} onOpenGallery={() => galleryInputRef.current?.click()} onAddManualMeal={(meal) => { saveMeal(meal); setIsMealDetailOpen(false) }} /> : null}
       {activeTab === 'progress' ? <ProgressPage profile={profile} progress={progress} consumed={consumed} water={water} meals={meals} onDeleteMeal={deleteMeal} /> : null}
       {activeTab === 'assistant' ? <AssistantPage profile={profile} meals={meals} water={water} messages={assistantMessages} onSaveMessage={saveAssistantMessage} /> : null}
-      {activeTab === 'profile' ? <ProfilePage profile={profile} onSave={updateProfile} onSignOut={session ? () => void supabase?.auth.signOut() : undefined} /> : null}
+      {activeTab === 'profile' ? <ProfilePage profile={profile} onSave={updateProfile} onSignOut={session ? () => setIsSignOutConfirmOpen(true) : undefined} /> : null}
     </div>
     <input ref={cameraInputRef} className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={(event) => { const file = event.target.files?.[0]; if (file) addMealFromCamera(file); event.currentTarget.value = '' }} />
     <input ref={galleryInputRef} className="visually-hidden" type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; if (file) addMealFromCamera(file); event.currentTarget.value = '' }} />
     {mealImage || isAnalyzingMeal || mealAnalysisError ? <MealAnalysisModal image={mealImage} analysis={mealAnalysis} isLoading={isAnalyzingMeal} error={mealAnalysisError} onClose={closeMealAnalysis} onRetry={(clarification) => analyzeMealImage(mealImage, clarification)} onConfirm={(name, calories, type, memoryUpdates) => { saveMeal({ id: createId(), type, name, calories }); if (memoryUpdates.length) updateProfile({ ...profile, coachMemory: mergeCoachMemory(profile.coachMemory, memoryUpdates) }); closeMealAnalysis(); setActiveTab('today') }} /> : null}
     {mealNotice ? <div className="meal-success-backdrop" role="presentation" onClick={() => setMealNotice('')}><section className="meal-success-popup" role="status" aria-live="polite" onClick={(event) => event.stopPropagation()}><span className="meal-success-icon"><CheckCircle2 size={34} strokeWidth={2.2} /></span><h2>Öğün kaydedildi</h2><p>{mealNotice}</p><button type="button" onClick={() => setMealNotice('')}>Tamam</button></section></div> : null}
+    {isSignOutConfirmOpen ? <div className="sign-out-confirm-backdrop" role="presentation" onClick={() => setIsSignOutConfirmOpen(false)}><section className="sign-out-confirm-popup" role="dialog" aria-modal="true" aria-labelledby="sign-out-confirm-title" onClick={(event) => event.stopPropagation()}><span className="sign-out-confirm-icon"><User size={27} /></span><h2 id="sign-out-confirm-title">Hesaptan çıkmak istiyor musun?</h2><p>Tekrar giriş yapana kadar hesabına ve kayıtlarına erişemezsin.</p><div className="sign-out-confirm-actions"><button className="cancel" type="button" onClick={() => setIsSignOutConfirmOpen(false)}>Vazgeç</button><button className="confirm" type="button" onClick={() => { setIsSignOutConfirmOpen(false); void supabase?.auth.signOut() }}>Hesaptan çık</button></div></section></div> : null}
     {dataError ? <div className="data-error-toast" role="alert"><span>{dataError}</span><button type="button" onClick={() => setDataError('')} aria-label="Hatayı kapat"><X size={16} /></button></div> : null}
     <nav className="tab-bar" aria-label="Alt menü">
       <TabButton active={activeTab === 'today'} icon={<CalendarDays size={23} />} label="Takvim" onClick={() => setActiveTab('today')} />
@@ -480,6 +489,7 @@ function MealTypePicker({ value, onChange }: { value: string; onChange: (value: 
 function MealCard({ meal, onDelete }: { meal: Meal; onDelete?: () => void }) { return <article className="meal-card"><div><p>{meal.type}</p><h3>{meal.name}</h3></div><span className="meal-card-actions"><strong>{meal.calories ? `${meal.calories} kcal` : 'Kalori girilmedi'}</strong>{onDelete ? <button type="button" onClick={onDelete} aria-label={`${meal.name} öğününü sil`} title="Öğünü sil"><Trash2 size={17} /></button> : null}</span></article> }
 function TabButton({ active, icon, label, onClick }: { active: boolean; icon: ReactNode; label: string; onClick: () => void }) { return <button className={active ? 'tab active' : 'tab'} type="button" onClick={onClick} aria-current={active ? 'page' : undefined}><span>{icon}</span>{label}</button> }
 function buildPastDays(count: number) { const today = new Date(); return Array.from({ length: count }, (_, index) => { const date = new Date(today); date.setDate(today.getDate() - index); return date }) }
+function getGreetingForHour(hour: number) { if (hour >= 5 && hour < 12) return 'Günaydın'; if (hour >= 12 && hour < 18) return 'İyi günler'; return 'İyi akşamlar' }
 function toDateInputValue(date: Date) { const year = date.getFullYear(); const month = String(date.getMonth() + 1).padStart(2, '0'); const day = String(date.getDate()).padStart(2, '0'); return `${year}-${month}-${day}` }
 function parseDateInputValue(value: string) { const [year, month, day] = value.split('-').map(Number); return new Date(year, month - 1, day) }
 function formatHeaderDate(date: Date) { return headerDateFormatter.format(date).toLocaleUpperCase('tr-TR') }
