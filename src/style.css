@@ -2742,6 +2742,10 @@ body { background: #f6f7f4; }
 .auth-card form input:focus { border-color: #adc34c; box-shadow: 0 0 0 4px rgba(173, 195, 76, 0.12); }
 .auth-submit { min-height: 50px; margin-top: 4px; border: 0; border-radius: 13px; color: #171a18; background: #dff57b; font-weight: 900; cursor: pointer; }
 .auth-submit:disabled { opacity: 0.55; cursor: wait; }
+.auth-actions { display: grid; gap: 13px; }
+.google-auth-button { min-height: 52px; display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; border: 1px solid #dfe3dd; border-radius: 13px; color: #171a18; background: #ffffff; font: inherit; font-weight: 900; cursor: pointer; box-shadow: 0 8px 20px rgba(25, 34, 28, 0.07); }
+.google-auth-button span { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; color: #ffffff; background: #4285f4; font-weight: 900; }
+.google-auth-button:disabled { opacity: 0.62; cursor: wait; }
 .auth-error,.auth-notice { margin: 0; padding: 11px 12px; border-radius: 11px; font-size: 11px; line-height: 1.4; }
 .auth-error { color: #944536; background: #fff0ec; }
 .auth-notice { color: #526221; background: #f0f7cf; }

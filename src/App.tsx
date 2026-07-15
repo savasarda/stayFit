@@ -207,22 +207,31 @@ function App() {
 
 function LoadingScreen({ message }: { message: string }) { return <main className="auth-shell"><section className="auth-card loading-card"><span className="auth-loader" /><h1>StayFit</h1><p>{message}...</p></section></main> }
 
+function getAuthErrorMessage(message: string) {
+  const normalized = message.toLocaleLowerCase('en-US')
+  if (normalized.includes('email rate limit') || normalized.includes('rate limit')) return 'Çok kısa sürede fazla kayıt denemesi yapıldı. Birkaç dakika bekleyip tekrar dene.'
+  if (normalized.includes('invalid login credentials')) return 'E-posta veya şifre hatalı.'
+  if (normalized.includes('user already registered') || normalized.includes('already registered')) return 'Bu e-posta adresiyle zaten bir hesap var. Giriş yapmayı dene.'
+  if (normalized.includes('password') && normalized.includes('6')) return 'Şifre en az 6 karakter olmalı.'
+  return message || 'İşlem tamamlanamadı. Lütfen tekrar dene.'
+}
+
 function AuthPage() {
-  const [mode, setMode] = useState<'login' | 'signup'>('login')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(false)
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (!supabase || loading) return
-    setLoading(true); setError(''); setNotice('')
-    const result = mode === 'login' ? await supabase.auth.signInWithPassword({ email, password }) : await supabase.auth.signUp({ email, password })
-    if (result.error) setError(result.error.message)
-    else if (mode === 'signup' && !result.data.session) setNotice('E-posta adresine gelen doğrulama bağlantısını aç.')
-    setLoading(false)
+  async function signInWithGoogle() {
+    if (!supabase || loading) return
+    setLoading(true); setError('')
+    try {
+      const result = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } })
+      if (result.error) setError(getAuthErrorMessage(result.error.message))
+    } catch (error) {
+      setError(getAuthErrorMessage(error instanceof Error ? error.message : 'İşlem tamamlanamadı. Lütfen tekrar dene.'))
+    } finally {
+      setLoading(false)
+    }
   }
-  return <main className="auth-shell"><section className="auth-card"><span className="auth-brand"><Flame size={24} /></span><p className="auth-eyebrow">STAYFIT HESABIN</p><h1>{mode === 'login' ? 'Tekrar hoş geldin' : 'Hesabını oluştur'}</h1><p className="auth-copy">Öğünlerin, su kayıtların ve hedeflerin tüm cihazlarında seninle kalsın.</p><div className="auth-tabs"><button className={mode === 'login' ? 'active' : ''} type="button" onClick={() => { setMode('login'); setError(''); setNotice('') }}>Giriş yap</button><button className={mode === 'signup' ? 'active' : ''} type="button" onClick={() => { setMode('signup'); setError(''); setNotice('') }}>Kayıt ol</button></div><form onSubmit={submit}><label><span>E-posta</span><input type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="ornek@email.com" /></label><label><span>Şifre</span><input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={6} required value={password} onChange={(event) => setPassword(event.target.value)} placeholder="En az 6 karakter" /></label>{error ? <p className="auth-error" role="alert">{error}</p> : null}{notice ? <p className="auth-notice" role="status">{notice}</p> : null}<button className="auth-submit" type="submit" disabled={loading}>{loading ? 'Bekle...' : mode === 'login' ? 'Giriş yap' : 'Hesap oluştur'}</button></form></section></main>
+  return <main className="auth-shell"><section className="auth-card"><span className="auth-brand"><Flame size={24} /></span><p className="auth-eyebrow">STAYFIT HESABIN</p><h1>Hesabına giriş yap</h1><p className="auth-copy">Öğünlerin, su kayıtların ve hedeflerin tüm cihazlarında seninle kalsın.</p><div className="auth-actions">{error ? <p className="auth-error" role="alert">{error}</p> : null}<button className="google-auth-button" type="button" onClick={signInWithGoogle} disabled={loading}><span aria-hidden="true">G</span>{loading ? 'Google açılıyor...' : 'Google ile devam et'}</button></div></section></main>
 }
 
 function MealAnalysisModal({ image, analysis, isLoading, error, onClose, onRetry, onConfirm }: { image: string; analysis: MealAnalysis | null; isLoading: boolean; error: string; onClose: () => void; onRetry: (clarification: string) => void; onConfirm: (name: string, calories: number, type: string) => void }) {
