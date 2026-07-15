@@ -1,8 +1,9 @@
 import { supabase } from './supabase'
 
 export type StoredMeal = { id: string; type: string; name: string; calories: number }
-export type StoredProfile = { name: string; height: number; startWeight: number; currentWeight: number; targetWeight: number; dailyCalories: number; mealCount: number; sensitivities: string[]; reminders: string[] }
+export type StoredProfile = { name: string; height: number; startWeight: number; currentWeight: number; targetWeight: number; dailyCalories: number; mealCount: number; sensitivities: string[]; reminders: string[]; coachMemory: string[] }
 export type StoredDailyRecords = Record<string, { meals: StoredMeal[]; water: number }>
+export type StoredAssistantMessage = { id: string; from: 'user' | 'assistant'; text: string; createdAt?: string }
 
 function requireClient() {
   if (!supabase) throw new Error('Supabase bağlantısı yapılandırılmamış.')
@@ -11,13 +12,14 @@ function requireClient() {
 
 export async function loadUserData(userId: string, fallbackProfile: StoredProfile) {
   const client = requireClient()
-  const [profileResult, mealsResult, waterResult] = await Promise.all([
-    client.from('profiles').select('id,full_name,height_cm,start_weight_kg,current_weight_kg,target_weight_kg,daily_calories,meal_count,sensitivities,reminders').eq('id', userId).maybeSingle(),
+  const [profileResult, mealsResult, waterResult, assistantResult] = await Promise.all([
+    client.from('profiles').select('id,full_name,height_cm,start_weight_kg,current_weight_kg,target_weight_kg,daily_calories,meal_count,sensitivities,reminders,coach_memory').eq('id', userId).maybeSingle(),
     client.from('meals').select('id,meal_date,meal_type,food_name,calories,created_at').eq('user_id', userId).order('meal_date', { ascending: false }),
     client.from('daily_water').select('water_date,amount_ml').eq('user_id', userId).order('water_date', { ascending: false }),
+    client.from('assistant_messages').select('id,sender,message_text,created_at').eq('user_id', userId).order('created_at', { ascending: true }).limit(200),
   ])
 
-  const firstError = profileResult.error || mealsResult.error || waterResult.error
+  const firstError = profileResult.error || mealsResult.error || waterResult.error || assistantResult.error
   if (firstError) throw firstError
 
   const row = profileResult.data
@@ -31,6 +33,7 @@ export async function loadUserData(userId: string, fallbackProfile: StoredProfil
     mealCount: Number(row.meal_count) || 3,
     sensitivities: Array.isArray(row.sensitivities) ? row.sensitivities : [],
     reminders: Array.isArray(row.reminders) ? row.reminders : [],
+    coachMemory: Array.isArray(row.coach_memory) ? row.coach_memory : [],
   } : fallbackProfile
 
   const dailyRecords: StoredDailyRecords = {}
@@ -45,7 +48,14 @@ export async function loadUserData(userId: string, fallbackProfile: StoredProfil
     dailyRecords[date].water = Number(water.amount_ml) || 0
   }
 
-  return { profile, dailyRecords, hasProfile: Boolean(row) }
+  const assistantMessages: StoredAssistantMessage[] = (assistantResult.data || []).map((message) => ({
+    id: message.id,
+    from: message.sender === 'user' ? 'user' : 'assistant',
+    text: message.message_text,
+    createdAt: message.created_at,
+  }))
+
+  return { profile, dailyRecords, assistantMessages, hasProfile: Boolean(row) }
 }
 
 export async function saveUserProfile(userId: string, profile: StoredProfile) {
@@ -61,6 +71,7 @@ export async function saveUserProfile(userId: string, profile: StoredProfile) {
     meal_count: profile.mealCount || 3,
     sensitivities: profile.sensitivities,
     reminders: profile.reminders,
+    coach_memory: profile.coachMemory,
     updated_at: new Date().toISOString(),
   })
   if (error) throw error
@@ -94,11 +105,20 @@ export async function saveUserWater(userId: string, date: string, amount: number
   if (error) throw error
 }
 
-export async function migrateLocalData(userId: string, profile: StoredProfile, dailyRecords: StoredDailyRecords) {
+export async function createUserAssistantMessage(userId: string, message: Omit<StoredAssistantMessage, 'id' | 'createdAt'>) {
+  const client = requireClient()
+  const { data, error } = await client.from('assistant_messages').insert({ user_id: userId, sender: message.from, message_text: message.text }).select('id,created_at').single()
+  if (error) throw error
+  return { ...message, id: data.id, createdAt: data.created_at } as StoredAssistantMessage
+}
+
+export async function migrateLocalData(userId: string, profile: StoredProfile, dailyRecords: StoredDailyRecords, assistantMessages: StoredAssistantMessage[] = []) {
   await saveUserProfile(userId, profile)
   const client = requireClient()
   const meals = Object.entries(dailyRecords).flatMap(([date, record]) => record.meals.map((meal) => ({ user_id: userId, meal_date: date, meal_type: meal.type, food_name: meal.name, calories: meal.calories })))
   const waters = Object.entries(dailyRecords).filter(([, record]) => record.water > 0).map(([date, record]) => ({ user_id: userId, water_date: date, amount_ml: record.water }))
+  const messages = assistantMessages.map((message) => ({ user_id: userId, sender: message.from, message_text: message.text, created_at: message.createdAt || new Date().toISOString() }))
   if (meals.length) { const { error } = await client.from('meals').insert(meals); if (error) throw error }
   if (waters.length) { const { error } = await client.from('daily_water').upsert(waters, { onConflict: 'user_id,water_date' }); if (error) throw error }
+  if (messages.length) { const { error } = await client.from('assistant_messages').insert(messages); if (error) throw error }
 }

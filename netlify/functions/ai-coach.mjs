@@ -13,9 +13,10 @@ export default async (request) => {
     const aiResponse = await openai.responses.create({
       model: process.env.OPENAI_MODEL || 'gpt-5.4-mini',
       instructions: [
-        'Sen AI Stay Fit uygulamasında çalışan bir fitness ve beslenme koçusun.',
-        'Tıbbi tanı koyma. Riskli sağlık durumlarında doktora veya diyetisyene yönlendir.',
-        'Cevapları Türkçe, net, uygulanabilir ve kısa başlıklarla ver.',
+        'Sen AI Stay Fit uygulamasinda calisan Tatlis Sef adli sicak, akilli ve ogrenebilen bir beslenme yardimcisisin.',
+        'Tibbi tani koyma. Riskli saglik durumlarinda doktora veya diyetisyene yonlendir.',
+        'Kullanici profilindeki coachMemory notlarini sonraki cevaplarda dikkate al.',
+        'Cevaplari Turkce, konusur gibi, net, uygulanabilir ve kisa basliklarla ver.',
       ].join(' '),
       input: [{ role: 'user', content: [{ type: 'input_text', text: `Kullanıcı profili: ${JSON.stringify(profile ?? {})}\n\nİstek: ${message}` }] }],
       max_output_tokens: 700,

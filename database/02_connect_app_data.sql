@@ -7,6 +7,7 @@ alter table public.profiles add column if not exists daily_calories integer;
 alter table public.profiles add column if not exists meal_count integer default 3;
 alter table public.profiles add column if not exists sensitivities text[] default '{}';
 alter table public.profiles add column if not exists reminders text[] default '{}';
+alter table public.profiles add column if not exists coach_memory text[] default '{}';
 
 create table if not exists public.daily_water (
   id uuid primary key default gen_random_uuid(),
@@ -18,11 +19,20 @@ create table if not exists public.daily_water (
   unique (user_id, water_date)
 );
 
+create table if not exists public.assistant_messages (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  sender text not null check (sender in ('user', 'assistant')),
+  message_text text not null,
+  created_at timestamptz not null default now()
+);
+
 alter table public.profiles enable row level security;
 alter table public.goals enable row level security;
 alter table public.meals enable row level security;
 alter table public.body_measurements enable row level security;
 alter table public.daily_water enable row level security;
+alter table public.assistant_messages enable row level security;
 
 drop policy if exists "profiles_own_rows" on public.profiles;
 create policy "profiles_own_rows" on public.profiles for all
@@ -44,6 +54,11 @@ drop policy if exists "daily_water_own_rows" on public.daily_water;
 create policy "daily_water_own_rows" on public.daily_water for all
   using (user_id = auth.uid()) with check (user_id = auth.uid());
 
+drop policy if exists "assistant_messages_own_rows" on public.assistant_messages;
+create policy "assistant_messages_own_rows" on public.assistant_messages for all
+  using (user_id = auth.uid()) with check (user_id = auth.uid());
+
 create index if not exists meals_user_date_idx on public.meals (user_id, meal_date desc);
 create index if not exists daily_water_user_date_idx on public.daily_water (user_id, water_date desc);
 create index if not exists measurements_user_created_idx on public.body_measurements (user_id, created_at desc);
+create index if not exists assistant_messages_user_created_idx on public.assistant_messages (user_id, created_at desc);

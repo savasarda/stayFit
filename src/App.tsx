@@ -3,7 +3,7 @@ import type { CSSProperties, FormEvent, ReactNode } from 'react'
 import { Bell, Bot, CalendarDays, Camera, ChartNoAxesColumnIncreasing, CheckCircle2, ChevronRight, Droplets, Flame, Plus, Send, Settings, ShieldCheck, Sparkles, Trash2, Utensils, User, X } from 'lucide-react'
 import { reportException } from './lib/errorLogger'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
-import { createUserMeal, loadUserData, migrateLocalData, removeUserMeal, saveUserProfile, saveUserWater } from './lib/dataStore'
+import { createUserAssistantMessage, createUserMeal, loadUserData, migrateLocalData, removeUserMeal, saveUserProfile, saveUserWater } from './lib/dataStore'
 import type { Session } from '@supabase/supabase-js'
 import './style.css'
 
@@ -11,24 +11,26 @@ type OpenAIStatus = { configured: boolean; model: string }
 type Tab = 'today' | 'progress' | 'assistant' | 'profile'
 type Meal = { id: string; type: string; name: string; calories: number }
 const mealTypes = ['Kahvaltı', 'Öğle yemeği', 'Akşam yemeği', 'Ara öğün'] as const
-type ChatMessage = { id: string; from: 'user' | 'assistant'; text: string }
-type MealAnalysis = { meal_name: string; total_calories: number; calorie_min: number; calorie_max: number; confidence: number; items: { name: string; portion: string; calories: number }[]; assumptions: string[]; needs_clarification: boolean; clarification_question: string }
+type ChatMessage = { id: string; from: 'user' | 'assistant'; text: string; createdAt?: string }
+type MealAnalysis = { meal_name: string; total_calories: number; calorie_min: number; calorie_max: number; confidence: number; items: { name: string; portion: string; calories: number }[]; assumptions: string[]; needs_clarification: boolean; clarification_question: string; chef_feedback: string; memory_updates: string[] }
 type DailyRecord = { meals: Meal[]; water: number }
 type DailyRecords = Record<string, DailyRecord>
-type Profile = { name: string; height: number; startWeight: number; currentWeight: number; targetWeight: number; dailyCalories: number; mealCount: number; sensitivities: string[]; reminders: string[] }
-const emptyProfile: Profile = { name: '', height: 0, startWeight: 0, currentWeight: 0, targetWeight: 0, dailyCalories: 0, mealCount: 3, sensitivities: [], reminders: [] }
+type Profile = { name: string; height: number; startWeight: number; currentWeight: number; targetWeight: number; dailyCalories: number; mealCount: number; sensitivities: string[]; reminders: string[]; coachMemory: string[] }
+const emptyProfile: Profile = { name: '', height: 0, startWeight: 0, currentWeight: 0, targetWeight: 0, dailyCalories: 0, mealCount: 3, sensitivities: [], reminders: [], coachMemory: [] }
 const shortDayFormatter = new Intl.DateTimeFormat('tr-TR', { weekday: 'short' })
 const headerDateFormatter = new Intl.DateTimeFormat('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' })
 
 function App() {
+  const shouldUseSupabase = isSupabaseConfigured && import.meta.env.PROD
   const [session, setSession] = useState<Session | null>(null)
-  const [isAuthReady, setIsAuthReady] = useState(!isSupabaseConfigured)
-  const [isDataReady, setIsDataReady] = useState(!isSupabaseConfigured)
+  const [isAuthReady, setIsAuthReady] = useState(!shouldUseSupabase)
+  const [isDataReady, setIsDataReady] = useState(!shouldUseSupabase)
   const [dataError, setDataError] = useState('')
   const [activeTab, setActiveTab] = useState<Tab>('today')
   const [profile, setProfile] = useState<Profile>(() => ({ ...emptyProfile, ...readSavedValue('ai-stay-fit-profile', emptyProfile) }))
   const [selectedDate, setSelectedDate] = useState(toDateInputValue(new Date()))
   const [dailyRecords, setDailyRecords] = useState<DailyRecords>(loadDailyRecords)
+  const [assistantMessages, setAssistantMessages] = useState<ChatMessage[]>(() => readSavedValue<ChatMessage[]>('ai-stay-fit-assistant-messages', []))
   const [lastPhotoName, setLastPhotoName] = useState('')
   const [mealNotice, setMealNotice] = useState('')
   const [isMealDetailOpen, setIsMealDetailOpen] = useState(false)
@@ -51,26 +53,33 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!supabase) return
+    if (!supabase || !shouldUseSupabase) return
     void supabase.auth.getSession().then(({ data }) => { setSession(data.session); setIsAuthReady(true) })
     const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => { setSession(nextSession); setIsAuthReady(true) })
     return () => data.subscription.unsubscribe()
-  }, [])
+  }, [shouldUseSupabase])
 
   useEffect(() => {
-    if (!session?.user.id) { if (isSupabaseConfigured) setIsDataReady(false); return }
+    if (!shouldUseSupabase) return
+    if (!session?.user.id) { setIsDataReady(false); return }
     let cancelled = false
     async function load() {
       setIsDataReady(false); setDataError('')
       try {
         let loaded = await loadUserData(session!.user.id, emptyProfile)
-        const hasLocalData = Boolean(profile.name || profile.height || profile.currentWeight || Object.keys(dailyRecords).length)
+        const localCoachMemory = readSavedValue<string[]>('ai-stay-fit-coach-memory', [])
+        const localProfile = { ...profile, coachMemory: mergeCoachMemory(profile.coachMemory, localCoachMemory) }
+        const hasLocalData = Boolean(localProfile.name || localProfile.height || localProfile.currentWeight || Object.keys(dailyRecords).length || assistantMessages.length || localCoachMemory.length)
         if (!loaded.hasProfile && hasLocalData && !readSavedValue('ai-stay-fit-supabase-migrated', false)) {
-          await migrateLocalData(session!.user.id, profile, dailyRecords)
+          await migrateLocalData(session!.user.id, localProfile, dailyRecords, assistantMessages)
           writeSavedValue('ai-stay-fit-supabase-migrated', true)
           loaded = await loadUserData(session!.user.id, emptyProfile)
         }
-        if (!cancelled) { setProfile(loaded.profile); setDailyRecords(loaded.dailyRecords) }
+        if (!cancelled) {
+          setProfile({ ...loaded.profile, coachMemory: mergeCoachMemory(loaded.profile.coachMemory, localCoachMemory) })
+          setDailyRecords(loaded.dailyRecords)
+          setAssistantMessages(loaded.assistantMessages)
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Supabase verileri alınamadı.'
         if (!cancelled) setDataError(message)
@@ -79,10 +88,12 @@ function App() {
     }
     void load()
     return () => { cancelled = true }
-  }, [session?.user.id])
+  }, [session?.user.id, shouldUseSupabase])
 
-  useEffect(() => { if (!isSupabaseConfigured) writeSavedValue('ai-stay-fit-profile', profile) }, [profile])
-  useEffect(() => { if (!isSupabaseConfigured) writeSavedValue('ai-stay-fit-daily-records', dailyRecords) }, [dailyRecords])
+  useEffect(() => { if (!shouldUseSupabase) writeSavedValue('ai-stay-fit-profile', profile) }, [profile, shouldUseSupabase])
+  useEffect(() => { writeSavedValue('ai-stay-fit-coach-memory', profile.coachMemory || []) }, [profile.coachMemory])
+  useEffect(() => { if (!shouldUseSupabase) writeSavedValue('ai-stay-fit-daily-records', dailyRecords) }, [dailyRecords, shouldUseSupabase])
+  useEffect(() => { if (!shouldUseSupabase) writeSavedValue('ai-stay-fit-assistant-messages', assistantMessages) }, [assistantMessages, shouldUseSupabase])
 
   async function addMealFromCamera(file: File) {
     setLastPhotoName(file.name)
@@ -106,7 +117,7 @@ function App() {
     setIsAnalyzingMeal(true)
     setMealAnalysisError('')
     try {
-      const apiResponse = await fetch('/api/analyze-meal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image, clarification }) })
+      const apiResponse = await fetch('/api/analyze-meal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image, clarification, profile: { ...profile, meals, water } }) })
       const data = await apiResponse.json()
       if (!apiResponse.ok) throw new Error(data.error || 'Fotoğraf analiz edilemedi.')
       setMealAnalysis(data.analysis)
@@ -128,7 +139,7 @@ function App() {
     setDailyRecords((current) => {
       const record = current[selectedDate] || { meals: [], water: 0 }
       const updated = { ...current, [selectedDate]: { ...record, meals: [...record.meals, savedMeal] } }
-      if (!isSupabaseConfigured) writeSavedValue('ai-stay-fit-daily-records', updated)
+      if (!shouldUseSupabase) writeSavedValue('ai-stay-fit-daily-records', updated)
       return updated
     })
     setMealNotice(`${savedMeal.name} kaydedildi`)
@@ -142,7 +153,7 @@ function App() {
     setDailyRecords((current) => {
       const record = current[selectedDate] || { meals: [], water: 0 }
       const updated = { ...current, [selectedDate]: { ...record, water: nextWater } }
-      if (!isSupabaseConfigured) writeSavedValue('ai-stay-fit-daily-records', updated)
+      if (!shouldUseSupabase) writeSavedValue('ai-stay-fit-daily-records', updated)
       return updated
     })
   }
@@ -153,7 +164,7 @@ function App() {
     setDailyRecords((current) => {
       const record = current[selectedDate] || { meals: [], water: 0 }
       const updated = { ...current, [selectedDate]: { ...record, water: nextWater } }
-      if (!isSupabaseConfigured) writeSavedValue('ai-stay-fit-daily-records', updated)
+      if (!shouldUseSupabase) writeSavedValue('ai-stay-fit-daily-records', updated)
       return updated
     })
   }
@@ -163,7 +174,7 @@ function App() {
     setDailyRecords((current) => {
       const record = current[selectedDate] || { meals: [], water: 0 }
       const updated = { ...current, [selectedDate]: { ...record, meals: record.meals.filter((meal) => meal.id !== mealId) } }
-      if (!isSupabaseConfigured) writeSavedValue('ai-stay-fit-daily-records', updated)
+      if (!shouldUseSupabase) writeSavedValue('ai-stay-fit-daily-records', updated)
       return updated
     })
   }
@@ -179,8 +190,22 @@ function App() {
     if (session?.user.id) void saveUserProfile(session.user.id, nextProfile).catch((error) => handleDataError(error, 'Profil Supabase’e kaydedilemedi.'))
   }
 
+  async function saveAssistantMessage(message: Omit<ChatMessage, 'id' | 'createdAt'>) {
+    const localMessage: ChatMessage = { ...message, id: createId(), createdAt: new Date().toISOString() }
+    setAssistantMessages((current) => [...current, localMessage].slice(-200))
+    if (session?.user.id) {
+      try {
+        const savedMessage = await createUserAssistantMessage(session.user.id, message)
+        setAssistantMessages((current) => current.map((item) => item.id === localMessage.id ? savedMessage : item))
+      } catch (error) {
+        handleDataError(error, 'Tatliş Şef konuşması Supabase’e kaydedilemedi.')
+      }
+    }
+    return localMessage
+  }
+
   if (!isAuthReady) return <LoadingScreen message="Oturum kontrol ediliyor" />
-  if (isSupabaseConfigured && !session) return <AuthPage />
+  if (shouldUseSupabase && !session) return <AuthPage />
   if (!isDataReady) return <LoadingScreen message="Verilerin hazırlanıyor" />
   if (!isProfileComplete(profile)) return <OnboardingPage profile={profile} onSave={updateProfile} onSignOut={session ? () => void supabase?.auth.signOut() : undefined} />
 
@@ -189,18 +214,18 @@ function App() {
     <div className={activeTab === 'today' ? 'screen' : 'screen full-page'}>
       {activeTab === 'today' ? <TodayPage profile={profile} water={water} meals={meals} dailyRecords={dailyRecords} recordedDates={new Set(Object.keys(dailyRecords).filter((date) => dailyRecords[date].water || dailyRecords[date].meals.length))} selectedDate={selectedDate} lastPhotoName={lastPhotoName} isMealDetailOpen={isMealDetailOpen} onSelectDate={setSelectedDate} onAddWater={addWater} onRemoveWater={removeWater} onOpenMealDetail={() => setIsMealDetailOpen(true)} onCloseMealDetail={() => setIsMealDetailOpen(false)} onOpenAssistant={() => setActiveTab('assistant')} onAddPhoto={() => fileInputRef.current?.click()} onAddManualMeal={(meal) => { saveMeal(meal); setIsMealDetailOpen(false) }} /> : null}
       {activeTab === 'progress' ? <ProgressPage profile={profile} progress={progress} consumed={consumed} water={water} meals={meals} onDeleteMeal={deleteMeal} /> : null}
-      {activeTab === 'assistant' ? <AssistantPage profile={profile} meals={meals} water={water} /> : null}
+      {activeTab === 'assistant' ? <AssistantPage profile={profile} meals={meals} water={water} messages={assistantMessages} onSaveMessage={saveAssistantMessage} /> : null}
       {activeTab === 'profile' ? <ProfilePage profile={profile} onSave={updateProfile} onSignOut={session ? () => void supabase?.auth.signOut() : undefined} /> : null}
     </div>
     <input ref={fileInputRef} className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={(event) => { const file = event.target.files?.[0]; if (file) addMealFromCamera(file); event.currentTarget.value = '' }} />
-    {mealImage || isAnalyzingMeal || mealAnalysisError ? <MealAnalysisModal image={mealImage} analysis={mealAnalysis} isLoading={isAnalyzingMeal} error={mealAnalysisError} onClose={closeMealAnalysis} onRetry={(clarification) => analyzeMealImage(mealImage, clarification)} onConfirm={(name, calories, type) => { saveMeal({ id: createId(), type, name, calories }); closeMealAnalysis(); setActiveTab('today') }} /> : null}
+    {mealImage || isAnalyzingMeal || mealAnalysisError ? <MealAnalysisModal image={mealImage} analysis={mealAnalysis} isLoading={isAnalyzingMeal} error={mealAnalysisError} onClose={closeMealAnalysis} onRetry={(clarification) => analyzeMealImage(mealImage, clarification)} onConfirm={(name, calories, type, memoryUpdates) => { saveMeal({ id: createId(), type, name, calories }); if (memoryUpdates.length) updateProfile({ ...profile, coachMemory: mergeCoachMemory(profile.coachMemory, memoryUpdates) }); closeMealAnalysis(); setActiveTab('today') }} /> : null}
     {mealNotice ? <div className="meal-success-backdrop" role="presentation" onClick={() => setMealNotice('')}><section className="meal-success-popup" role="status" aria-live="polite" onClick={(event) => event.stopPropagation()}><span className="meal-success-icon"><CheckCircle2 size={34} strokeWidth={2.2} /></span><h2>Öğün kaydedildi</h2><p>{mealNotice}</p><button type="button" onClick={() => setMealNotice('')}>Tamam</button></section></div> : null}
     {dataError ? <div className="data-error-toast" role="alert"><span>{dataError}</span><button type="button" onClick={() => setDataError('')} aria-label="Hatayı kapat"><X size={16} /></button></div> : null}
     <nav className="tab-bar" aria-label="Alt menü">
       <TabButton active={activeTab === 'today'} icon={<CalendarDays size={23} />} label="Takvim" onClick={() => setActiveTab('today')} />
       <TabButton active={activeTab === 'progress'} icon={<ChartNoAxesColumnIncreasing size={23} />} label="İlerleme" onClick={() => setActiveTab('progress')} />
       <button className="camera-button" type="button" onClick={() => fileInputRef.current?.click()} aria-label="Kamerayla öğün ekle"><Camera size={25} strokeWidth={2.2} /></button>
-      <TabButton active={activeTab === 'assistant'} icon={<Bot size={23} />} label="Koç" onClick={() => setActiveTab('assistant')} />
+      <TabButton active={activeTab === 'assistant'} icon={<Bot size={23} />} label="Tatliş Şef" onClick={() => setActiveTab('assistant')} />
       <TabButton active={activeTab === 'profile'} icon={<User size={23} />} label="Profil" onClick={() => setActiveTab('profile')} />
     </nav>
   </section></main>
@@ -278,7 +303,7 @@ function OnboardingPage({ profile, onSave, onSignOut }: { profile: Profile; onSa
   return <main className="onboarding-shell"><section className="onboarding-card"><span className="auth-brand"><Flame size={24} /></span><p className="auth-eyebrow">STAYFIT PROFİLİ</p><h1>Planını hazırlayalım</h1><p className="auth-copy">Koç önerileri, kalori hedefi ve öğün takibi için bu bilgiler gerekli.</p><form onSubmit={submit}><div className="onboarding-grid"><label><span>Adın</span><input value={form.name} onChange={(event) => update('name', event.target.value)} placeholder="Adını yaz" /></label><label><span>Boy</span><input type="number" inputMode="decimal" value={form.height} onChange={(event) => update('height', event.target.value)} placeholder="cm" /></label><label><span>Güncel kilo</span><input type="number" inputMode="decimal" step="0.1" value={form.currentWeight} onChange={(event) => update('currentWeight', event.target.value)} placeholder="kg" /></label><label><span>Hedef kilo</span><input type="number" inputMode="decimal" step="0.1" value={form.targetWeight} onChange={(event) => update('targetWeight', event.target.value)} placeholder="kg" /></label><label><span>Günlük kalori hedefi</span><input type="number" inputMode="numeric" value={form.dailyCalories} onChange={(event) => update('dailyCalories', event.target.value)} placeholder="Örn. 1800" /></label></div><fieldset className="onboarding-meal-count"><legend>Günde kaç öğün yiyorsun?</legend><div>{['2', '3', '4', '5'].map((count) => <button className={form.mealCount === count ? 'selected' : ''} type="button" key={count} onClick={() => update('mealCount', count)}><strong>{count}</strong><span>öğün</span></button>)}</div></fieldset><fieldset className="onboarding-sensitivities"><legend>Besin hassasiyetlerin</legend><div>{sensitivityOptions.map((item) => <button className={selectedSensitivities.includes(item) ? 'selected' : ''} type="button" key={item} onClick={() => toggleSensitivity(item)}>{item}</button>)}</div><label><span>Başka hassasiyet</span><textarea value={customSensitivity} onChange={(event) => setCustomSensitivity(event.target.value)} placeholder="Varsa virgülle ayırarak yaz" rows={2} /></label></fieldset>{error ? <p className="auth-error" role="alert">{error}</p> : null}<button className="auth-submit" type="submit">Profili kaydet ve başla</button>{onSignOut ? <button className="onboarding-signout" type="button" onClick={onSignOut}>Farklı hesapla giriş yap</button> : null}</form></section></main>
 }
 
-function MealAnalysisModal({ image, analysis, isLoading, error, onClose, onRetry, onConfirm }: { image: string; analysis: MealAnalysis | null; isLoading: boolean; error: string; onClose: () => void; onRetry: (clarification: string) => void; onConfirm: (name: string, calories: number, type: string) => void }) {
+function MealAnalysisModal({ image, analysis, isLoading, error, onClose, onRetry, onConfirm }: { image: string; analysis: MealAnalysis | null; isLoading: boolean; error: string; onClose: () => void; onRetry: (clarification: string) => void; onConfirm: (name: string, calories: number, type: string, memoryUpdates: string[]) => void }) {
   const [name, setName] = useState('')
   const [calories, setCalories] = useState('')
   const [mealType, setMealType] = useState(suggestMealType)
@@ -287,7 +312,7 @@ function MealAnalysisModal({ image, analysis, isLoading, error, onClose, onRetry
   const calorieValue = Number(calories)
   const canConfirm = Boolean(analysis && name.trim() && Number.isFinite(calorieValue) && calorieValue > 0 && !isLoading)
 
-  return <div className="meal-analysis-backdrop" role="presentation"><section className="meal-analysis-modal" role="dialog" aria-modal="true" aria-labelledby="analysis-title"><header><div><p>FOTOĞRAF ANALİZİ</p><h2 id="analysis-title">Öğünü doğrula</h2></div><button type="button" onClick={onClose} aria-label="Analizi kapat"><X size={21} /></button></header>{image ? <img className="meal-analysis-image" src={image} alt="Analiz edilen öğün" /> : null}{isLoading ? <div className="analysis-loading"><span /><strong>Öğün analiz ediliyor</strong><small>İçerikler ve porsiyonlar kontrol ediliyor...</small></div> : null}{error && !isLoading ? <div className="analysis-error" role="alert"><strong>Analiz tamamlanamadı</strong><p>{error}</p><button type="button" onClick={() => onRetry(clarification)} disabled={!image}>Tekrar dene</button></div> : null}{analysis && !isLoading ? <><MealTypePicker value={mealType} onChange={setMealType} /><div className="analysis-confidence"><span><strong>%{analysis.confidence}</strong><small>Görsel güveni</small></span><div><i style={{ width: `${analysis.confidence}%` }} /></div></div><div className="analysis-edit-grid"><label><span>Öğün adı</span><input value={name} onChange={(event) => setName(event.target.value)} /></label><label><span>Kalori</span><input inputMode="numeric" type="number" min="1" value={calories} onChange={(event) => setCalories(event.target.value)} /></label></div><div className="calorie-range"><span>Tahmini aralık</span><strong>{analysis.calorie_min}–{analysis.calorie_max} kcal</strong></div><section className="analysis-items"><h3>Fotoğrafta bulunanlar</h3>{analysis.items.map((item, index) => <div key={`${item.name}-${index}`}><span><strong>{item.name}</strong><small>{item.portion}</small></span><b>{item.calories} kcal</b></div>)}</section>{analysis.assumptions.length ? <div className="analysis-assumptions"><strong>Dikkate alınan varsayımlar</strong>{analysis.assumptions.map((item) => <p key={item}>• {item}</p>)}</div> : null}{analysis.needs_clarification ? <div className="analysis-question"><strong>Daha doğru sonuç için</strong><p>{analysis.clarification_question}</p><div><input value={clarification} onChange={(event) => setClarification(event.target.value)} placeholder="Örn. 1 yemek kaşığı zeytinyağı" /><button type="button" onClick={() => onRetry(clarification)} disabled={!clarification.trim()}>Yeniden analiz et</button></div></div> : null}<p className="analysis-disclaimer">Kalori değeri fotoğraf ve verdiğin porsiyon bilgisine dayalı bir tahmindir. Kaydetmeden önce kontrol et.</p><button className="analysis-confirm" type="button" disabled={!canConfirm} onClick={() => onConfirm(name.trim(), Math.round(calorieValue), mealType)}><CheckCircle2 size={19} /> Onayla ve kaydet</button></> : null}</section></div>
+  return <div className="meal-analysis-backdrop" role="presentation"><section className="meal-analysis-modal" role="dialog" aria-modal="true" aria-labelledby="analysis-title"><header><div><p>TATLİŞ ŞEF ANALİZİ</p><h2 id="analysis-title">Öğünü doğrula</h2></div><button type="button" onClick={onClose} aria-label="Analizi kapat"><X size={21} /></button></header>{image ? <img className="meal-analysis-image" src={image} alt="Analiz edilen öğün" /> : null}{isLoading ? <div className="analysis-loading"><span /><strong>Tatliş Şef bakıyor</strong><small>İçerikler, porsiyonlar ve hedefin kontrol ediliyor...</small></div> : null}{error && !isLoading ? <div className="analysis-error" role="alert"><strong>Analiz tamamlanamadı</strong><p>{error}</p><button type="button" onClick={() => onRetry(clarification)} disabled={!image}>Tekrar dene</button></div> : null}{analysis && !isLoading ? <><MealTypePicker value={mealType} onChange={setMealType} /><div className="chef-feedback"><strong>Tatliş Şef</strong><p>{analysis.chef_feedback || 'Bu öğünü kaydetmeden önce porsiyon ve kalori değerini birlikte kontrol edelim.'}</p></div><div className="analysis-confidence"><span><strong>%{analysis.confidence}</strong><small>Görsel güveni</small></span><div><i style={{ width: `${analysis.confidence}%` }} /></div></div><div className="analysis-edit-grid"><label><span>Öğün adı</span><input value={name} onChange={(event) => setName(event.target.value)} /></label><label><span>Kalori</span><input inputMode="numeric" type="number" min="1" value={calories} onChange={(event) => setCalories(event.target.value)} /></label></div><div className="calorie-range"><span>Tahmini aralık</span><strong>{analysis.calorie_min}–{analysis.calorie_max} kcal</strong></div><section className="analysis-items"><h3>Fotoğrafta bulunanlar</h3>{analysis.items.map((item, index) => <div key={`${item.name}-${index}`}><span><strong>{item.name}</strong><small>{item.portion}</small></span><b>{item.calories} kcal</b></div>)}</section>{analysis.assumptions.length ? <div className="analysis-assumptions"><strong>Dikkate alınan varsayımlar</strong>{analysis.assumptions.map((item) => <p key={item}>• {item}</p>)}</div> : null}{(analysis.memory_updates || []).length ? <div className="analysis-memory"><strong>Tatliş Şef bunu hatırlayacak</strong>{(analysis.memory_updates || []).map((item) => <p key={item}>• {item}</p>)}</div> : null}{analysis.needs_clarification ? <div className="analysis-question"><strong>Daha doğru sonuç için</strong><p>{analysis.clarification_question}</p><div><input value={clarification} onChange={(event) => setClarification(event.target.value)} placeholder="Örn. 1 yemek kaşığı zeytinyağı" /><button type="button" onClick={() => onRetry(clarification)} disabled={!clarification.trim()}>Yeniden analiz et</button></div></div> : null}<p className="analysis-disclaimer">Kalori değeri fotoğraf ve verdiğin porsiyon bilgisine dayalı bir tahmindir. Kaydetmeden önce kontrol et.</p><button className="analysis-confirm" type="button" disabled={!canConfirm} onClick={() => onConfirm(name.trim(), Math.round(calorieValue), mealType, analysis.memory_updates || [])}><CheckCircle2 size={19} /> Onayla ve kaydet</button></> : null}</section></div>
 }
 
 function TodayPage({ profile, water, meals, dailyRecords, recordedDates, selectedDate, lastPhotoName, isMealDetailOpen, onSelectDate, onAddWater, onRemoveWater, onOpenMealDetail, onCloseMealDetail, onOpenAssistant, onAddPhoto, onAddManualMeal }: { profile: Profile; water: number; meals: Meal[]; dailyRecords: DailyRecords; recordedDates: Set<string>; selectedDate: string; lastPhotoName: string; isMealDetailOpen: boolean; onSelectDate: (date: string) => void; onAddWater: () => void; onRemoveWater: () => void; onOpenMealDetail: () => void; onCloseMealDetail: () => void; onOpenAssistant: () => void; onAddPhoto: () => void; onAddManualMeal: (meal: Meal) => void }) {
@@ -338,27 +363,28 @@ function ProgressPage({ profile, progress, consumed, water, meals, onDeleteMeal 
   return <section className="page-stack"><div className="progress-hero"><p>Güncel kilon</p><h2>{profile.currentWeight || '--'} <span>kg</span></h2><div className="goal-track"><span style={{ width: `${Math.max(0, Math.min(progress, 100))}%` }} /></div><div className="goal-labels"><small>{profile.startWeight ? `${profile.startWeight} kg başlangıç` : 'Başlangıç yok'}</small><small>{profile.targetWeight ? `${profile.targetWeight} kg hedef` : 'Hedef yok'}</small></div></div><div className="stat-grid"><div><strong>{profile.startWeight && profile.currentWeight ? `${Math.max(profile.startWeight - profile.currentWeight, 0).toFixed(1)}` : '--'}</strong><span>Verilen</span></div><div><strong>{profile.currentWeight && profile.targetWeight ? `${Math.max(profile.currentWeight - profile.targetWeight, 0).toFixed(1)}` : '--'}</strong><span>Kalan</span></div><div><strong>{Math.max(0, Math.min(progress, 100))}%</strong><span>Tamamlandı</span></div></div><section className="detail-panel"><div className="section-title"><h2>Gün detayları</h2><span>{meals.length} kayıt</span></div><div className="detail-row"><span>Kalori</span><strong>{consumed} / {profile.dailyCalories || '--'} kcal</strong></div><div className="detail-row"><span>Su</span><strong>{(water / 1000).toFixed(1)} / 2.5 L</strong></div>{meals.map((meal) => <MealCard key={meal.id} meal={meal} onDelete={() => setMealToDelete(meal)} />)}{!meals.length ? <p className="empty-state">Bugün için henüz öğün kaydı yok.</p> : null}</section>{mealToDelete ? <div className="delete-meal-backdrop" role="presentation" onClick={() => setMealToDelete(null)}><section className="delete-meal-popup" role="dialog" aria-modal="true" aria-labelledby="delete-meal-title" onClick={(event) => event.stopPropagation()}><span><Trash2 size={28} /></span><h2 id="delete-meal-title">Öğün silinsin mi?</h2><p><strong>{mealToDelete.name}</strong> seçili günün kayıtlarından kaldırılacak.</p><div><button type="button" onClick={() => setMealToDelete(null)}>Vazgeç</button><button type="button" onClick={() => { onDeleteMeal(mealToDelete.id); setMealToDelete(null) }}><Trash2 size={17} /> Öğünü sil</button></div></section></div> : null}</section>
 }
 
-function AssistantPage({ profile, meals, water }: { profile: Profile; meals: Meal[]; water: number }) {
+function AssistantPage({ profile, meals, water, messages, onSaveMessage }: { profile: Profile; meals: Meal[]; water: number; messages: ChatMessage[]; onSaveMessage: (message: Omit<ChatMessage, 'id' | 'createdAt'>) => Promise<ChatMessage> }) {
   const [message, setMessage] = useState('')
-  const [messages, setMessages] = useState<ChatMessage[]>([{ id: 'welcome', from: 'assistant', text: 'Bugünkü öğünlerin, su tüketimin ve hedeflerine göre sana uygun seçenekler sunabilirim. Ne yemek istediğini söylemen yeterli.' }])
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false)
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const welcomeMessage: ChatMessage = { id: 'welcome', from: 'assistant', text: 'Ben Tatliş Şef. Bugünkü öğünlerin, su tüketimin, hedeflerin ve hatırladığım tercihlere göre sana net öneriler verebilirim.' }
+  const visibleMessages = messages.length ? messages : [welcomeMessage]
 
   async function sendMessage(text = message) {
     const question = text.trim()
     if (!question || isLoading) return
-    const userMessage: ChatMessage = { id: createId(), from: 'user', text: question }
-    const conversation = [...messages, userMessage]
-    setMessages(conversation)
     setMessage('')
     setIsLoading(true)
     setError('')
     try {
+      const userMessage = await onSaveMessage({ from: 'user', text: question })
+      const conversation = [...messages, userMessage]
       const recentConversation = conversation.slice(-6).map((item) => `${item.from === 'user' ? 'Kullanıcı' : 'Asistan'}: ${item.text}`).join('\n')
-      const response = await fetch('/api/ai-coach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: `${recentConversation}\n\nSon isteğe 3 uygulanabilir yemek seçeneğiyle yanıt ver.`, profile: { ...profile, meals, water } }) })
+      const response = await fetch('/api/ai-coach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: `${recentConversation}\n\nSon isteğe Tatliş Şef olarak konuşur gibi yanıt ver. Öğün çok/az/dengesiz görünüyorsa söyle, pratik bir sonraki adım öner.`, profile: { ...profile, meals, water } }) })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'AI koç yanıt veremedi.')
-      setMessages((current) => [...current, { id: createId(), from: 'assistant', text: data.answer || 'Yanıt alınamadı.' }])
+      await onSaveMessage({ from: 'assistant', text: data.answer || 'Yanıt alınamadı.' })
     } catch (requestError) {
       const errorMessage = requestError instanceof Error ? requestError.message : 'AI koç yanıt veremedi.'
       setError(errorMessage)
@@ -366,7 +392,12 @@ function AssistantPage({ profile, meals, water }: { profile: Profile; meals: Mea
     } finally { setIsLoading(false) }
   }
 
-  return <section className="assistant-page"><div className="assistant-heading"><div><p>STAYFIT ASİSTAN</p><h2>Ne yesem?</h2></div><span><i /> Hazır</span></div><div className="suggestion-row"><button type="button" onClick={() => sendMessage('Akşam için hafif ve doyurucu ne yiyebilirim?')}>Akşam önerisi</button><button type="button" onClick={() => sendMessage('Protein ağırlıklı üç öğün öner')}>Protein ağırlıklı</button></div><div className="chat-messages" aria-live="polite">{messages.map((item) => <article className={item.from === 'user' ? 'chat-bubble user' : 'chat-bubble assistant'} key={item.id}>{item.text}</article>)}{isLoading ? <article className="chat-bubble assistant loading">Öneriler hazırlanıyor...</article> : null}</div>{error ? <div className="form-error" role="alert">{error}</div> : null}<form className="chat-compose" onSubmit={(event) => { event.preventDefault(); void sendMessage() }}><input aria-label="Asistana mesaj" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Bir şey sor..." /><button type="submit" disabled={!message.trim() || isLoading} aria-label="Mesaj gönder"><Send size={19} /></button></form></section>
+  return <section className="assistant-page"><div className="assistant-heading"><div><p>TATLİŞ ŞEF</p><h2>Ne yesem?</h2></div><button className="assistant-history-button" type="button" onClick={() => setIsHistoryOpen(true)}>Geçmiş</button></div><div className="suggestion-row"><button type="button" onClick={() => sendMessage('Akşam için hafif ve doyurucu ne yiyebilirim?')}>Akşam önerisi</button><button type="button" onClick={() => sendMessage('Protein ağırlıklı üç öğün öner')}>Protein ağırlıklı</button></div><div className="chat-messages" aria-live="polite">{visibleMessages.map((item) => <article className={item.from === 'user' ? 'chat-bubble user' : 'chat-bubble assistant'} key={item.id}>{item.text}</article>)}{isLoading ? <article className="chat-bubble assistant loading">Tatliş Şef düşünüyor...</article> : null}</div>{error ? <div className="form-error" role="alert">{error}</div> : null}<form className="chat-compose" onSubmit={(event) => { event.preventDefault(); void sendMessage() }}><input aria-label="Tatliş Şef'e mesaj" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Tatliş Şef'e sor..." /><button type="submit" disabled={!message.trim() || isLoading} aria-label="Mesaj gönder"><Send size={19} /></button></form>{isHistoryOpen ? <AssistantHistorySheet messages={messages} onClose={() => setIsHistoryOpen(false)} /> : null}</section>
+}
+
+function AssistantHistorySheet({ messages, onClose }: { messages: ChatMessage[]; onClose: () => void }) {
+  const history = messages.slice().reverse()
+  return <div className="assistant-history-backdrop" role="presentation" onClick={onClose}><section className="assistant-history-sheet" role="dialog" aria-modal="true" aria-labelledby="assistant-history-title" onClick={(event) => event.stopPropagation()}><div className="meal-sheet-handle" /><header><div><h2 id="assistant-history-title">Tatliş Şef geçmişi</h2><p>Önceki tarif ve önerilere buradan dönebilirsin.</p></div><button type="button" onClick={onClose} aria-label="Tatliş Şef geçmişini kapat"><X size={22} /></button></header><div className="assistant-history-list">{history.length ? history.map((item) => <article className={item.from === 'user' ? 'assistant-history-item user' : 'assistant-history-item assistant'} key={item.id}><span>{item.from === 'user' ? 'Sen' : 'Tatliş Şef'}{item.createdAt ? ` · ${formatChatTime(item.createdAt)}` : ''}</span><p>{item.text}</p></article>) : <p className="empty-state">Henüz kayıtlı konuşma yok.</p>}</div></section></div>
 }
 
 function HistorySheet({ dailyRecords, selectedDate, onClose, onSelect }: { dailyRecords: DailyRecords; selectedDate: string; onClose: () => void; onSelect: (date: string) => void }) {
@@ -386,7 +417,7 @@ function ProfilePage({ profile, onSave, onSignOut }: { profile: Profile; onSave:
   const bmi = profile.height && profile.currentWeight ? profile.currentWeight / Math.pow(profile.height / 100, 2) : 0
   function update(field: keyof typeof form, value: string) { setForm((current) => ({ ...current, [field]: value })) }
   function toggleItem(item: string, selected: string[], setSelected: (value: string[]) => void) { setSelected(selected.includes(item) ? selected.filter((value) => value !== item) : [...selected, item]) }
-  function saveProfile(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const manualSensitivities = customSensitivity.split(',').map((item) => item.trim()).filter(Boolean); onSave({ name: form.name.trim(), height: Number(form.height) || 0, startWeight: Number(form.startWeight) || 0, currentWeight: Number(form.currentWeight) || 0, targetWeight: Number(form.targetWeight) || 0, dailyCalories: Number(form.dailyCalories) || 0, mealCount: Number(form.mealCount) || 3, sensitivities: [...new Set([...selectedSensitivities, ...manualSensitivities])], reminders: selectedReminders }); setSettingsSection(null) }
+  function saveProfile(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const manualSensitivities = customSensitivity.split(',').map((item) => item.trim()).filter(Boolean); onSave({ ...profile, name: form.name.trim(), height: Number(form.height) || 0, startWeight: Number(form.startWeight) || 0, currentWeight: Number(form.currentWeight) || 0, targetWeight: Number(form.targetWeight) || 0, dailyCalories: Number(form.dailyCalories) || 0, mealCount: Number(form.mealCount) || 3, sensitivities: [...new Set([...selectedSensitivities, ...manualSensitivities])], reminders: selectedReminders }); setSettingsSection(null) }
   const sectionTitle: Record<SettingsSection, [string, string]> = { general: ['Profil ayarları', 'Kişisel bilgilerini ve hedeflerini güncelle'], mealCount: ['Günlük öğün', 'Gün içinde kaç öğün planlamak istersin?'], calories: ['Kalori hedefi', 'Günlük kalori hedefini belirle'], sensitivities: ['Hassasiyetler', 'Sana uygun olmayan besinleri seç'], reminders: ['Hatırlatıcılar', 'Almak istediğin bildirimleri seç'] }
   return <section className="profile-page"><div className="profile-page-title"><div><p>HESABIN</p><h2>Profil</h2></div><button type="button" onClick={() => setSettingsSection('general')} aria-label="Profil ayarlarını aç"><Settings size={21} /></button></div><div className="profile-identity"><div className="profile-avatar-letter">{displayName[0].toLocaleUpperCase('tr-TR')}</div><h3>{displayName}</h3><p>{profile.targetWeight ? `${profile.targetWeight} kg hedefine doğru ilerliyorsun` : 'Hedefini belirleyerek takibe başla'}</p></div><div className="profile-metrics"><div><strong>{profile.height || '--'}</strong><span>Boy · cm</span></div><div><strong>{profile.currentWeight || profile.startWeight || '--'}</strong><span>Kilo · kg</span></div><div><strong>{bmi ? bmi.toFixed(1) : '--'}</strong><span>BMI</span></div></div><h3 className="profile-plan-title">Planın</h3><div className="profile-plan-list"><ProfilePlanRow icon={<Utensils size={20} />} label="Günlük öğün" value={`${profile.mealCount || 3} öğün`} onClick={() => setSettingsSection('mealCount')} /><ProfilePlanRow icon={<Flame size={20} />} label="Kalori hedefi" value={profile.dailyCalories ? `${profile.dailyCalories} kcal` : 'Belirlenmedi'} onClick={() => setSettingsSection('calories')} /><ProfilePlanRow icon={<ShieldCheck size={20} />} label="Hassasiyetler" value={profile.sensitivities.length ? profile.sensitivities.join(', ') : 'Bulunmuyor'} onClick={() => setSettingsSection('sensitivities')} /><ProfilePlanRow icon={<Bell size={20} />} label="Hatırlatıcılar" value={profile.reminders?.length ? profile.reminders.join(', ') : 'Kapalı'} onClick={() => setSettingsSection('reminders')} /></div><div className="plus-banner"><span><Sparkles size={20} /></span><div><strong>StayFit Plus</strong><small>Kişisel analizler ve sınırsız asistan</small></div><ChevronRight size={20} /></div>{onSignOut ? <button className="sign-out-button" type="button" onClick={onSignOut}>Hesaptan çık</button> : null}{settingsSection ? <div className="profile-settings-backdrop" role="presentation" onClick={() => setSettingsSection(null)}><form className="profile-settings-sheet" onSubmit={saveProfile} onClick={(event) => event.stopPropagation()}><div className="meal-sheet-handle" /><header><div><h2>{sectionTitle[settingsSection][0]}</h2><p>{sectionTitle[settingsSection][1]}</p></div><button type="button" onClick={() => setSettingsSection(null)} aria-label="Profil ayarlarını kapat"><X size={22} /></button></header>{settingsSection === 'general' ? <div className="goal-form-grid"><label><span>Adın</span><input value={form.name} onChange={(event) => update('name', event.target.value)} placeholder="Adını yaz" /></label><label><span>Boy</span><input type="number" value={form.height} onChange={(event) => update('height', event.target.value)} placeholder="cm" /></label><label><span>Başlangıç kilosu</span><input type="number" step="0.1" value={form.startWeight} onChange={(event) => update('startWeight', event.target.value)} placeholder="kg" /></label><label><span>Güncel kilo</span><input type="number" step="0.1" value={form.currentWeight} onChange={(event) => update('currentWeight', event.target.value)} placeholder="kg" /></label><label><span>Hedef kilo</span><input type="number" step="0.1" value={form.targetWeight} onChange={(event) => update('targetWeight', event.target.value)} placeholder="kg" /></label></div> : null}{settingsSection === 'mealCount' ? <div className="settings-choice-grid meal-count-choices">{['2', '3', '4', '5'].map((count) => <button className={form.mealCount === count ? 'selected' : ''} type="button" key={count} onClick={() => update('mealCount', count)}><strong>{count}</strong><span>öğün</span></button>)}</div> : null}{settingsSection === 'calories' ? <div className="single-setting-field"><label><span>Günlük kalori hedefi</span><input autoFocus type="number" value={form.dailyCalories} onChange={(event) => update('dailyCalories', event.target.value)} placeholder="Örn. 1800" /></label><small>Bu değer günlük kalori özetinde kullanılacak.</small></div> : null}{settingsSection === 'sensitivities' ? <div className="sensitivity-settings"><div className="settings-choice-grid">{sensitivityOptions.map((item) => <button className={selectedSensitivities.includes(item) ? 'selected' : ''} type="button" key={item} onClick={() => toggleItem(item, selectedSensitivities, setSelectedSensitivities)}>{item}</button>)}</div><label className="manual-sensitivity"><span>Başka bir hassasiyet</span><textarea value={customSensitivity} onChange={(event) => setCustomSensitivity(event.target.value)} placeholder="Manuel olarak yaz. Birden fazlaysa virgülle ayır." rows={3} /></label></div> : null}{settingsSection === 'reminders' ? <div className="reminder-settings">{reminderOptions.map((item) => <button className={selectedReminders.includes(item) ? 'selected' : ''} type="button" key={item} onClick={() => toggleItem(item, selectedReminders, setSelectedReminders)}><span>{item}</span><i /></button>)}</div> : null}<button className="primary-action" type="submit">Değişiklikleri kaydet</button>{onSignOut ? <button className="settings-sign-out-button" type="button" onClick={onSignOut}>Hesaptan çık</button> : null}</form></div> : null}</section>
 }
@@ -401,6 +432,15 @@ function parseDateInputValue(value: string) { const [year, month, day] = value.s
 function formatHeaderDate(date: Date) { return headerDateFormatter.format(date).toLocaleUpperCase('tr-TR') }
 function formatShortDay(date: Date) { return shortDayFormatter.format(date).slice(0, 2).toLocaleUpperCase('tr-TR') }
 function formatLongDate(date: Date) { const value = date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' }); return value.charAt(0).toLocaleUpperCase('tr-TR') + value.slice(1) }
+function formatChatTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' }) + ' ' + date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+}
+function mergeCoachMemory(current: string[] = [], updates: string[] = []) {
+  const cleaned = updates.map((item) => item.trim()).filter(Boolean)
+  return [...new Set([...(current || []), ...cleaned])].slice(-20)
+}
 function readSavedValue<T>(key: string, fallback: T): T { try { const value = localStorage.getItem(key); return value ? JSON.parse(value) as T : fallback } catch { return fallback } }
 function loadDailyRecords(): DailyRecords {
   const existing = readSavedValue<DailyRecords>('ai-stay-fit-daily-records', {})
