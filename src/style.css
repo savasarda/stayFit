@@ -938,7 +938,7 @@ button { font: inherit; }
   height: calc(100svh - 82px);
   max-height: calc(100svh - 82px);
   overflow: hidden;
-  padding: 20px 20px 96px;
+  padding: 20px 20px 18px;
 }
 
 .date-toolbar {
