@@ -10,7 +10,7 @@ import './style.css'
 type OpenAIStatus = { configured: boolean; model: string }
 type Tab = 'today' | 'progress' | 'assistant' | 'profile'
 type Meal = { id: string; type: string; name: string; calories: number }
-type ManualMealEstimate = { meal_name: string; portion: string; unit: string; total_calories: number; calorie_min: number; calorie_max: number; confidence: number; feedback: string; source?: 'cache' | 'api' | 'local' }
+type ManualMealEstimate = { meal_name: string; portion: string; unit: string; total_calories: number; calorie_min: number; calorie_max: number; confidence: number; feedback: string; source?: 'cache' | 'api' | 'local'; persistence_error?: string }
 const mealTypes = ['Kahvaltı', 'Öğle yemeği', 'Akşam yemeği', 'Ara öğün'] as const
 type ChatMessage = { id: string; from: 'user' | 'assistant'; text: string; createdAt?: string }
 type MealAnalysis = { meal_name: string; total_calories: number; calorie_min: number; calorie_max: number; confidence: number; items: { name: string; portion: string; calories: number }[]; assumptions: string[]; needs_clarification: boolean; clarification_question: string; chef_feedback: string; memory_updates: string[] }
@@ -363,6 +363,7 @@ function TodayPage({ profile, water, meals, dailyRecords, recordedDates, selecte
     try {
       const estimate = await estimateManualMealCalories({ name, amount, unit: manualMealUnit, profile })
       setManualMealEstimate(estimate)
+      if (estimate.persistence_error) setManualMealError(estimate.persistence_error)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Kalori hesaplanamadı.'
       setManualMealError(message)
@@ -548,9 +549,12 @@ async function estimateManualMealCalories({ name, amount, unit, profile }: { nam
     const response = await fetch('/api/estimate-meal-calories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, amount, unit, profile }) })
     const data = await response.json()
     if (!response.ok) throw new Error(data.error || 'Kalori hesaplanamadı.')
-    return data.estimate
-  } catch {
-    return estimateManualMealCaloriesLocally(name, amount, unit)
+    return data.cache_saved === false
+      ? { ...data.estimate, persistence_error: `Kalori hesaplandı ancak ortak kalori tablosuna kaydedilemedi: ${data.cache_error || 'Supabase yazma hatası'}` }
+      : data.estimate
+  } catch (error) {
+    const fallback = estimateManualMealCaloriesLocally(name, amount, unit)
+    return { ...fallback, persistence_error: `Kalori yerel olarak hesaplandı ancak API ve ortak kalori tablosuna ulaşılamadı: ${error instanceof Error ? error.message : 'Bağlantı hatası'}` }
   }
 }
 function estimateManualMealCaloriesLocally(name: string, amount: number, unit: string): ManualMealEstimate {

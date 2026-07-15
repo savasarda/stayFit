@@ -1,14 +1,20 @@
 import OpenAI from 'openai'
 import { createClient } from '@supabase/supabase-js'
 
+function getEnv(name) {
+  return globalThis.Netlify?.env?.get(name) || process.env[name]
+}
+
 export function getOpenAI() {
-  const apiKey = process.env.OPENAI_API_KEY
+  const apiKey = getEnv('OPENAI_API_KEY')
   return apiKey ? new OpenAI({ apiKey }) : null
 }
 
 export function getSupabase(useAdmin = false) {
-  const url = process.env.VITE_SUPABASE_URL
-  const key = useAdmin ? process.env.SUPABASE_SERVICE_ROLE_KEY : (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY)
+  const url = getEnv('SUPABASE_URL') || getEnv('VITE_SUPABASE_URL')
+  const serviceRoleKey = getEnv('SUPABASE_SERVICE_ROLE_KEY')
+  const anonKey = getEnv('SUPABASE_ANON_KEY') || getEnv('VITE_SUPABASE_ANON_KEY')
+  const key = useAdmin ? serviceRoleKey : (serviceRoleKey || anonKey)
   return url && key ? createClient(url, key, { auth: { persistSession: false } }) : null
 }
 

@@ -80,7 +80,7 @@ function mapSharedEstimate(row) {
 }
 
 async function getSharedCalorieEstimate(cacheKey) {
-  const supabase = getSupabase(true)
+  const supabase = getSupabase()
   if (!supabase) return null
   const rpcResult = await supabase.rpc('get_shared_calorie_estimate', { p_cache_key: cacheKey })
   if (!rpcResult.error && rpcResult.data?.[0]) {
@@ -102,7 +102,7 @@ async function touchSharedCalorieEstimate(supabase, cacheKey, useCount) {
 }
 
 async function saveSharedCalorieEstimate(cacheKey, { name, amount, unit, estimate }) {
-  const supabase = getSupabase(true)
+  const supabase = getSupabase()
   if (!supabase) return { ok: false, error: 'Supabase client is not configured' }
   const payload = {
     cache_key: cacheKey,
