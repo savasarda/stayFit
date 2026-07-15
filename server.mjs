@@ -245,15 +245,23 @@ async function getSharedCalorieEstimate(cacheKey) {
     return null
   }
   if (!data) return null
-  void client.from('shared_calorie_estimates').update({ last_used_at: new Date().toISOString(), use_count: (Number(data.use_count) || 0) + 1 }).eq('cache_key', cacheKey)
+  void touchSharedCalorieEstimate(client, cacheKey, data.use_count)
   return mapSharedEstimate(data)
+}
+
+async function touchSharedCalorieEstimate(client, cacheKey, useCount) {
+  const { error } = await client.from('shared_calorie_estimates').update({ last_used_at: new Date().toISOString(), use_count: (Number(useCount) || 0) + 1 }).eq('cache_key', cacheKey)
+  if (!error) return true
+  const rpcResult = await client.rpc('touch_shared_calorie_estimate', { p_cache_key: cacheKey })
+  if (rpcResult.error) console.warn('Shared calorie estimate touch failed:', rpcResult.error.message)
+  return !rpcResult.error
 }
 
 async function saveSharedCalorieEstimate(cacheKey, { name, amount, unit, estimate }) {
   const client = supabaseAdmin || supabase
   if (!client) return false
   const now = new Date().toISOString()
-  const { error } = await client.from('shared_calorie_estimates').upsert({
+  const payload = {
     cache_key: cacheKey,
     food_name: String(name).trim(),
     amount,
@@ -268,9 +276,26 @@ async function saveSharedCalorieEstimate(cacheKey, { name, amount, unit, estimat
     source: estimate.source === 'local' ? 'local' : 'api',
     updated_at: now,
     last_used_at: now,
-  }, { onConflict: 'cache_key' })
-  if (error) {
-    console.warn('Shared calorie estimate write failed:', error.message)
+  }
+  const { error } = await client.from('shared_calorie_estimates').upsert(payload, { onConflict: 'cache_key' })
+  if (!error) return true
+
+  const rpcResult = await client.rpc('upsert_shared_calorie_estimate', {
+    p_cache_key: cacheKey,
+    p_food_name: payload.food_name,
+    p_amount: payload.amount,
+    p_unit: payload.unit,
+    p_meal_name: payload.meal_name,
+    p_portion: payload.portion,
+    p_total_calories: payload.total_calories,
+    p_calorie_min: payload.calorie_min,
+    p_calorie_max: payload.calorie_max,
+    p_confidence: payload.confidence,
+    p_feedback: payload.feedback,
+    p_source: payload.source,
+  })
+  if (rpcResult.error) {
+    console.warn('Shared calorie estimate write failed:', error.message, rpcResult.error.message)
     return false
   }
   return true

@@ -22,7 +22,7 @@ const shortDayFormatter = new Intl.DateTimeFormat('tr-TR', { weekday: 'short' })
 const headerDateFormatter = new Intl.DateTimeFormat('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' })
 
 function App() {
-  const shouldUseSupabase = isSupabaseConfigured && import.meta.env.PROD
+  const shouldUseSupabase = isSupabaseConfigured && (import.meta.env.PROD || import.meta.env.VITE_USE_SUPABASE_IN_DEV === 'true')
   const [session, setSession] = useState<Session | null>(null)
   const [isAuthReady, setIsAuthReady] = useState(!shouldUseSupabase)
   const [isDataReady, setIsDataReady] = useState(!shouldUseSupabase)
