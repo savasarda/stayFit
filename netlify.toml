@@ -1,0 +1,32 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+[[redirects]]
+  from = "/api/openai-status"
+  to = "/.netlify/functions/openai-status"
+  status = 200
+
+[[redirects]]
+  from = "/api/ai-coach"
+  to = "/.netlify/functions/ai-coach"
+  status = 200
+
+[[redirects]]
+  from = "/api/analyze-meal"
+  to = "/.netlify/functions/analyze-meal"
+  status = 200
+
+[[redirects]]
+  from = "/api/exceptions"
+  to = "/.netlify/functions/exceptions"
+  status = 200
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

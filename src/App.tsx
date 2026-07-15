@@ -90,9 +90,9 @@ function App() {
     setMealAnalysis(null)
     setMealAnalysisError('')
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { setMealAnalysisError('JPG, PNG veya WEBP formatında bir fotoğraf seç.'); setMealImage(''); return }
-    if (file.size > 10 * 1024 * 1024) { setMealAnalysisError('Fotoğraf 10 MB boyutundan küçük olmalı.'); setMealImage(''); return }
+    if (file.size > 20 * 1024 * 1024) { setMealAnalysisError('Fotoğraf 20 MB boyutundan küçük olmalı.'); setMealImage(''); return }
     try {
-      const image = await fileToDataUrl(file)
+      const image = await prepareMealImage(file)
       setMealImage(image)
       await analyzeMealImage(image)
     } catch (error) {
@@ -366,4 +366,20 @@ function createId() {
 }
 function suggestMealType() { const hour = new Date().getHours(); if (hour < 11) return 'Kahvaltı'; if (hour < 15) return 'Öğle yemeği'; if (hour < 18) return 'Ara öğün'; return 'Akşam yemeği' }
 function fileToDataUrl(file: File) { return new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Fotoğraf okunamadı.')); reader.onerror = () => reject(new Error('Fotoğraf okunamadı.')); reader.readAsDataURL(file) }) }
+async function prepareMealImage(file: File) {
+  const source = await fileToDataUrl(file)
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => { const element = new Image(); element.onload = () => resolve(element); element.onerror = () => reject(new Error('Fotoğraf işlenemedi.')); element.src = source })
+  const maxDimension = 2048
+  const scale = Math.min(maxDimension / image.naturalWidth, maxDimension / image.naturalHeight, 1)
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale))
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('Fotoğraf işlenemedi.')
+  context.drawImage(image, 0, 0, canvas.width, canvas.height)
+  let output = canvas.toDataURL('image/jpeg', 0.88)
+  if (output.length > 5_000_000) output = canvas.toDataURL('image/jpeg', 0.68)
+  if (output.length > 5_500_000) throw new Error('Fotoğraf analiz için hâlâ çok büyük. Daha düşük çözünürlüklü bir fotoğraf seç.')
+  return output
+}
 export default App
