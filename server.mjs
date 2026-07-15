@@ -239,6 +239,13 @@ function mapSharedEstimate(row) {
 async function getSharedCalorieEstimate(cacheKey) {
   const client = supabaseAdmin || supabase
   if (!client) return null
+  const rpcResult = await client.rpc('get_shared_calorie_estimate', { p_cache_key: cacheKey })
+  if (!rpcResult.error && rpcResult.data?.[0]) {
+    void touchSharedCalorieEstimate(client, cacheKey, rpcResult.data[0].use_count)
+    return mapSharedEstimate(rpcResult.data[0])
+  }
+  if (rpcResult.error && rpcResult.error.code !== 'PGRST202') console.warn('Shared calorie estimate RPC read failed:', rpcResult.error.message)
+
   const { data, error } = await client.from('shared_calorie_estimates').select('meal_name,portion,unit,total_calories,calorie_min,calorie_max,confidence,feedback,use_count').eq('cache_key', cacheKey).maybeSingle()
   if (error) {
     console.warn('Shared calorie estimate read failed:', error.message)

@@ -87,5 +87,40 @@ begin
 end;
 $$;
 
+create or replace function public.get_shared_calorie_estimate(p_cache_key text)
+returns table (
+  meal_name text,
+  portion text,
+  unit text,
+  total_calories integer,
+  calorie_min integer,
+  calorie_max integer,
+  confidence integer,
+  feedback text,
+  use_count integer
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  return query
+  select
+    sce.meal_name,
+    sce.portion,
+    sce.unit,
+    sce.total_calories,
+    sce.calorie_min,
+    sce.calorie_max,
+    sce.confidence,
+    sce.feedback,
+    sce.use_count
+  from public.shared_calorie_estimates sce
+  where sce.cache_key = p_cache_key
+  limit 1;
+end;
+$$;
+
 grant execute on function public.upsert_shared_calorie_estimate(text, text, numeric, text, text, text, integer, integer, integer, integer, text, text) to anon, authenticated;
 grant execute on function public.touch_shared_calorie_estimate(text) to anon, authenticated;
+grant execute on function public.get_shared_calorie_estimate(text) to anon, authenticated;

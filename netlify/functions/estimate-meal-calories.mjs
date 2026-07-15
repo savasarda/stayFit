@@ -82,6 +82,12 @@ function mapSharedEstimate(row) {
 async function getSharedCalorieEstimate(cacheKey) {
   const supabase = getSupabase(true)
   if (!supabase) return null
+  const rpcResult = await supabase.rpc('get_shared_calorie_estimate', { p_cache_key: cacheKey })
+  if (!rpcResult.error && rpcResult.data?.[0]) {
+    void touchSharedCalorieEstimate(supabase, cacheKey, rpcResult.data[0].use_count)
+    return mapSharedEstimate(rpcResult.data[0])
+  }
+
   const { data, error } = await supabase.from('shared_calorie_estimates').select('meal_name,portion,unit,total_calories,calorie_min,calorie_max,confidence,feedback,use_count').eq('cache_key', cacheKey).maybeSingle()
   if (error || !data) return null
   void touchSharedCalorieEstimate(supabase, cacheKey, data.use_count)
