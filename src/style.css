@@ -727,6 +727,19 @@ button { font: inherit; }
   min-height: 24px;
 }
 
+.tab-chef-mascot {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  transform: translateY(1px);
+  transition: transform 160ms ease, filter 160ms ease;
+}
+
+.tab.active .tab-chef-mascot {
+  transform: translateY(0) scale(1.08);
+  filter: drop-shadow(0 2px 4px rgba(139, 75, 29, 0.2));
+}
+
 .tab.active {
   color: #1d4d3f;
 }

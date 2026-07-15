@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, FormEvent, ReactNode } from 'react'
-import { Bell, Bot, CalendarDays, Camera, ChartNoAxesColumnIncreasing, CheckCircle2, ChevronRight, Droplets, Flame, ImageIcon, Plus, Send, Settings, ShieldCheck, Sparkles, Trash2, Utensils, User, X } from 'lucide-react'
+import { Bell, CalendarDays, Camera, ChartNoAxesColumnIncreasing, CheckCircle2, ChevronRight, Droplets, Flame, ImageIcon, Plus, Send, Settings, ShieldCheck, Sparkles, Trash2, Utensils, User, X } from 'lucide-react'
 import { reportException } from './lib/errorLogger'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { createUserAssistantMessage, createUserMeal, loadUserData, migrateLocalData, removeUserMeal, saveUserProfile, saveUserWater } from './lib/dataStore'
@@ -228,7 +228,7 @@ function App() {
       <TabButton active={activeTab === 'today'} icon={<CalendarDays size={23} />} label="Takvim" onClick={() => setActiveTab('today')} />
       <TabButton active={activeTab === 'progress'} icon={<ChartNoAxesColumnIncreasing size={23} />} label="İlerleme" onClick={() => setActiveTab('progress')} />
       <button className="camera-button" type="button" onClick={() => cameraInputRef.current?.click()} aria-label="Kamerayla öğün ekle"><Camera size={25} strokeWidth={2.2} /></button>
-      <TabButton active={activeTab === 'assistant'} icon={<Bot size={23} />} label="Tatliş Şef" onClick={() => setActiveTab('assistant')} />
+      <TabButton active={activeTab === 'assistant'} icon={<img className="tab-chef-mascot" src="/tatlis-sef-chef.png" alt="" />} label="Tatliş Şef" onClick={() => setActiveTab('assistant')} />
       <TabButton active={activeTab === 'profile'} icon={<User size={23} />} label="Profil" onClick={() => setActiveTab('profile')} />
     </nav>
   </section></main>
