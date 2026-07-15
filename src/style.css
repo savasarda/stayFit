@@ -1647,23 +1647,60 @@ button { font: inherit; }
 .assistant-mascot i {
   position: absolute;
   display: block;
-  background: #ffffff;
+  background: #f7f7f4;
 }
 
-.mascot-ear {
-  top: 14px;
-  width: 11px;
-  height: 25px;
-  border-radius: 999px;
+.assistant-mascot.bunny::after {
+  content: "";
+  position: absolute;
+  left: 27px;
+  bottom: 9px;
+  width: 4px;
+  height: 10px;
+  border-radius: 0 0 8px 8px;
+  border-bottom: 2px solid #efaaa8;
+  border-left: 2px solid #efaaa8;
+  border-right: 2px solid #efaaa8;
+  background: transparent;
+}
+
+.bunny-ear {
+  top: -2px;
+  width: 18px;
+  height: 42px;
+  border-radius: 999px 999px 12px 12px;
   transform-origin: bottom center;
 }
 
-.mascot-ear.one { left: 29px; transform: rotate(-18deg); }
-.mascot-ear.two { left: 39px; height: 23px; opacity: 0.88; transform: rotate(12deg); }
-.mascot-body { left: 17px; bottom: 15px; width: 25px; height: 19px; border-radius: 54% 46% 43% 57%; }
-.mascot-head { left: 34px; bottom: 21px; width: 18px; height: 18px; border-radius: 50%; }
-.mascot-eye { left: 44px; bottom: 28px; width: 5px; height: 5px; border-radius: 50%; background: #ef6c72 !important; animation: assistant-mascot-blink 4s ease-in-out infinite; }
-.mascot-tail { left: 11px; bottom: 18px; width: 10px; height: 10px; border-radius: 50%; }
+.bunny-ear b {
+  position: absolute;
+  inset: 7px 4px 6px;
+  border-radius: inherit;
+  background: #ffc0bc;
+}
+
+.bunny-ear.left { left: 7px; transform: rotate(-35deg); }
+.bunny-ear.right { right: 5px; height: 45px; transform: rotate(22deg); }
+.bunny-face { left: 5px; right: 5px; bottom: 4px; height: 40px; border-radius: 48% 48% 44% 44%; }
+.bunny-eye { bottom: 23px; width: 8px; height: 13px; border-radius: 999px; background: #244b62 !important; animation: assistant-mascot-blink 4s ease-in-out infinite; }
+.bunny-eye::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 3px;
+  width: 2px;
+  height: 3px;
+  border-radius: 50%;
+  background: #ffffff;
+}
+
+.bunny-eye.left { left: 18px; }
+.bunny-eye.right { right: 18px; }
+.bunny-cheek { bottom: 12px; width: 13px; height: 8px; border-radius: 50%; background: #ffc2bf !important; }
+.bunny-cheek.left { left: 10px; }
+.bunny-cheek.right { right: 10px; }
+.bunny-nose { left: 25px; bottom: 16px; width: 11px; height: 8px; border-radius: 48% 48% 58% 58%; background: #ffbbb8 !important; }
+.bunny-mouth { left: 27px; bottom: 9px; width: 9px; height: 9px; border: 0; border-bottom: 2px solid #efaaa8; border-radius: 0 0 999px 999px; background: transparent !important; }
 
 .assistant-heading p { margin: 0 0 3px; color: #e06642; font-size: 10px; font-weight: 900; }
 .assistant-heading h2 { margin: 0; color: #202521; font-size: 30px; }
