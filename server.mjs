@@ -183,12 +183,15 @@ app.post('/api/estimate-meal-calories', async (request, response) => {
       text: { format: { type: 'json_schema', name: 'manual_meal_estimate', strict: true, schema: {
         type: 'object',
         additionalProperties: false,
-        required: ['meal_name', 'portion', 'unit', 'total_calories', 'calorie_min', 'calorie_max', 'confidence', 'feedback'],
+        required: ['meal_name', 'portion', 'unit', 'total_calories', 'protein', 'carbs', 'fat', 'calorie_min', 'calorie_max', 'confidence', 'feedback'],
         properties: {
           meal_name: { type: 'string' },
           portion: { type: 'string' },
           unit: { type: 'string' },
           total_calories: { type: 'integer', minimum: 0 },
+          protein: { type: 'number', minimum: 0 },
+          carbs: { type: 'number', minimum: 0 },
+          fat: { type: 'number', minimum: 0 },
           calorie_min: { type: 'integer', minimum: 0 },
           calorie_max: { type: 'integer', minimum: 0 },
           confidence: { type: 'integer', minimum: 0, maximum: 100 },
@@ -360,10 +363,13 @@ app.post('/api/analyze-meal', async (request, response) => {
           schema: {
             type: 'object',
             additionalProperties: false,
-            required: ['meal_name', 'total_calories', 'calorie_min', 'calorie_max', 'confidence', 'items', 'assumptions', 'needs_clarification', 'clarification_question', 'chef_feedback', 'memory_updates'],
+            required: ['meal_name', 'total_calories', 'protein', 'carbs', 'fat', 'calorie_min', 'calorie_max', 'confidence', 'items', 'assumptions', 'needs_clarification', 'clarification_question', 'chef_feedback', 'memory_updates'],
             properties: {
               meal_name: { type: 'string' },
               total_calories: { type: 'integer', minimum: 0 },
+              protein: { type: 'number', minimum: 0 },
+              carbs: { type: 'number', minimum: 0 },
+              fat: { type: 'number', minimum: 0 },
               calorie_min: { type: 'integer', minimum: 0 },
               calorie_max: { type: 'integer', minimum: 0 },
               confidence: { type: 'integer', minimum: 0, maximum: 100 },

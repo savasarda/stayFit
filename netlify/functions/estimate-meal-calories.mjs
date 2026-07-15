@@ -35,12 +35,15 @@ export default async (request) => {
       text: { format: { type: 'json_schema', name: 'manual_meal_estimate', strict: true, schema: {
         type: 'object',
         additionalProperties: false,
-        required: ['meal_name', 'portion', 'unit', 'total_calories', 'calorie_min', 'calorie_max', 'confidence', 'feedback'],
+        required: ['meal_name', 'portion', 'unit', 'total_calories', 'protein', 'carbs', 'fat', 'calorie_min', 'calorie_max', 'confidence', 'feedback'],
         properties: {
           meal_name: { type: 'string' },
           portion: { type: 'string' },
           unit: { type: 'string' },
           total_calories: { type: 'integer', minimum: 0 },
+          protein: { type: 'number', minimum: 0 },
+          carbs: { type: 'number', minimum: 0 },
+          fat: { type: 'number', minimum: 0 },
           calorie_min: { type: 'integer', minimum: 0 },
           calorie_max: { type: 'integer', minimum: 0 },
           confidence: { type: 'integer', minimum: 0, maximum: 100 },

@@ -28,9 +28,9 @@ export default async (request) => {
       ] }],
       text: { format: { type: 'json_schema', name: 'meal_analysis', strict: true, schema: {
         type: 'object', additionalProperties: false,
-        required: ['meal_name', 'total_calories', 'calorie_min', 'calorie_max', 'confidence', 'items', 'assumptions', 'needs_clarification', 'clarification_question', 'chef_feedback', 'memory_updates'],
+        required: ['meal_name', 'total_calories', 'protein', 'carbs', 'fat', 'calorie_min', 'calorie_max', 'confidence', 'items', 'assumptions', 'needs_clarification', 'clarification_question', 'chef_feedback', 'memory_updates'],
         properties: {
-          meal_name: { type: 'string' }, total_calories: { type: 'integer', minimum: 0 }, calorie_min: { type: 'integer', minimum: 0 }, calorie_max: { type: 'integer', minimum: 0 }, confidence: { type: 'integer', minimum: 0, maximum: 100 },
+          meal_name: { type: 'string' }, total_calories: { type: 'integer', minimum: 0 }, protein: { type: 'number', minimum: 0 }, carbs: { type: 'number', minimum: 0 }, fat: { type: 'number', minimum: 0 }, calorie_min: { type: 'integer', minimum: 0 }, calorie_max: { type: 'integer', minimum: 0 }, confidence: { type: 'integer', minimum: 0, maximum: 100 },
           items: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['name', 'portion', 'calories'], properties: { name: { type: 'string' }, portion: { type: 'string' }, calories: { type: 'integer', minimum: 0 } } } },
           assumptions: { type: 'array', items: { type: 'string' } }, needs_clarification: { type: 'boolean' }, clarification_question: { type: 'string' }, chef_feedback: { type: 'string' }, memory_updates: { type: 'array', items: { type: 'string' } },
         },

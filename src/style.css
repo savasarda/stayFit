@@ -3086,5 +3086,34 @@ body { background: #f6f7f4; }
 .sign-out-confirm-actions .cancel { border: 1px solid #e4e7e2; color: #4f5752; background: #f6f7f5; }
 .sign-out-confirm-actions .confirm { border: 1px solid #c94736; color: #ffffff; background: #c94736; }
 
+.portion-adjuster { margin: 14px 0; }
+.portion-adjuster > span { display: block; margin-bottom: 8px; color: #68756f; font-size: 11px; font-weight: 850; }
+.portion-adjuster > div { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.portion-adjuster button { min-height: 42px; border: 1px solid #dfe4de; border-radius: 11px; color: #68716c; background: #f7f9f6; font-weight: 800; cursor: pointer; }
+.portion-adjuster button.active { border-color: #b8d56c; color: #263019; background: #eff8d8; box-shadow: inset 0 0 0 1px #d7eb9c; }
+
+.analysis-macro-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin: 10px 0 14px; }
+.analysis-macro-grid label { position: relative; display: grid; gap: 6px; }
+.analysis-macro-grid label span { color: #68756f; font-size: 10px; font-weight: 800; }
+.analysis-macro-grid input { width: 100%; min-height: 44px; padding: 0 28px 0 10px; border: 1px solid #dfe4de; border-radius: 10px; background: #fff; }
+.analysis-macro-grid label small { position: absolute; right: 8px; bottom: 14px; color: #989f9a; font-size: 9px; }
+
+.favorite-meals-picker { margin: 16px 0; padding: 14px; border: 1px solid #e2e9d0; border-radius: 15px; background: #f7faed; }
+.favorite-meals-picker > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.favorite-meals-picker > div:first-child strong { font-size: 13px; }
+.favorite-meals-picker > div:first-child small { color: #7b847b; font-size: 9px; }
+.favorite-meal-list { display: grid; gap: 7px; max-height: 150px; overflow-y: auto; }
+.favorite-meal-list > button { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 42px; padding: 8px 10px; border: 1px solid #e2e7d7; border-radius: 10px; color: #3d4939; background: #fff; cursor: pointer; }
+.favorite-meal-list > button span { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.favorite-meal-list > button strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.favorite-meal-list > button small { flex: 0 0 auto; color: #788074; font-size: 9px; }
+
+.meal-macros { display: block; margin-top: 4px; color: #8b938e; font-size: 9px; font-weight: 700; }
+.meal-card-actions button.favorite.active { color: #d45a52; background: #fff0ee; }
+.macro-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0 16px; }
+.macro-summary div { display: grid; gap: 3px; padding: 12px 8px; border: 1px solid #e5e9e3; border-radius: 12px; background: #f8faf7; text-align: center; }
+.macro-summary strong { color: #28302b; font-size: 14px; }
+.macro-summary span { color: #7c857f; font-size: 9px; font-weight: 750; }
+
 .data-error-toast { position: absolute; left: 16px; right: 16px; bottom: 96px; z-index: 65; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 13px; border: 1px solid #f0cfc6; border-radius: 13px; color: #873e31; background: #fff4f0; box-shadow: 0 14px 34px rgba(80, 38, 28, 0.15); font-size: 11px; font-weight: 750; }
 .data-error-toast button { display: grid; place-items: center; width: 28px; height: 28px; flex: 0 0 auto; border: 0; border-radius: 50%; color: #873e31; background: #f7ddd6; cursor: pointer; }
