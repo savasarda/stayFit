@@ -10,6 +10,7 @@ import './style.css'
 type OpenAIStatus = { configured: boolean; model: string }
 type Tab = 'today' | 'progress' | 'assistant' | 'profile'
 type Meal = { id: string; type: string; name: string; calories: number }
+type ManualMealEstimate = { meal_name: string; portion: string; unit: string; total_calories: number; calorie_min: number; calorie_max: number; confidence: number; feedback: string; source?: 'cache' | 'api' | 'local' }
 const mealTypes = ['Kahvaltı', 'Öğle yemeği', 'Akşam yemeği', 'Ara öğün'] as const
 type ChatMessage = { id: string; from: 'user' | 'assistant'; text: string; createdAt?: string }
 type MealAnalysis = { meal_name: string; total_calories: number; calorie_min: number; calorie_max: number; confidence: number; items: { name: string; portion: string; calories: number }[]; assumptions: string[]; needs_clarification: boolean; clarification_question: string; chef_feedback: string; memory_updates: string[] }
@@ -318,9 +319,12 @@ function MealAnalysisModal({ image, analysis, isLoading, error, onClose, onRetry
 function TodayPage({ profile, water, meals, dailyRecords, recordedDates, selectedDate, lastPhotoName, isMealDetailOpen, onSelectDate, onAddWater, onRemoveWater, onOpenMealDetail, onCloseMealDetail, onOpenAssistant, onAddPhoto, onAddManualMeal }: { profile: Profile; water: number; meals: Meal[]; dailyRecords: DailyRecords; recordedDates: Set<string>; selectedDate: string; lastPhotoName: string; isMealDetailOpen: boolean; onSelectDate: (date: string) => void; onAddWater: () => void; onRemoveWater: () => void; onOpenMealDetail: () => void; onCloseMealDetail: () => void; onOpenAssistant: () => void; onAddPhoto: () => void; onAddManualMeal: (meal: Meal) => void }) {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false)
   const [manualMealName, setManualMealName] = useState('')
-  const [manualMealCalories, setManualMealCalories] = useState('')
+  const [manualMealAmount, setManualMealAmount] = useState('')
+  const [manualMealUnit, setManualMealUnit] = useState('gram')
   const [manualMealType, setManualMealType] = useState(suggestMealType)
   const [manualMealError, setManualMealError] = useState('')
+  const [manualMealEstimate, setManualMealEstimate] = useState<ManualMealEstimate | null>(null)
+  const [isEstimatingMeal, setIsEstimatingMeal] = useState(false)
   const days = useMemo(() => buildPastDays(60), [])
   const consumed = meals.reduce((total, meal) => total + meal.calories, 0)
   const caloriesLeft = profile.dailyCalories ? Math.max(profile.dailyCalories - consumed, 0) : 0
@@ -328,12 +332,26 @@ function TodayPage({ profile, water, meals, dailyRecords, recordedDates, selecte
   const waterProgress = Math.min((water / 2500) * 100, 100)
   const mealProgress = Math.min((meals.length / Math.max(profile.mealCount || 3, 1)) * 100, 100)
 
-  function commitManualMeal() {
+  async function commitManualMeal() {
     const name = manualMealName.trim()
-    const calories = Number(manualMealCalories)
+    const amount = Number(manualMealAmount)
     if (!name) { setManualMealError('Öğün adını yazmalısın.'); return }
-    onAddManualMeal({ id: createId(), type: manualMealType, name, calories: Number.isFinite(calories) && calories > 0 ? Math.round(calories) : 0 })
-    setManualMealName(''); setManualMealCalories(''); setManualMealError('')
+    if (!Number.isFinite(amount) || amount <= 0) { setManualMealError('Miktarı gram veya adet olarak yazmalısın.'); return }
+    setIsEstimatingMeal(true); setManualMealError('')
+    try {
+      const estimate = await estimateManualMealCalories({ name, amount, unit: manualMealUnit, profile })
+      setManualMealEstimate(estimate)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Kalori hesaplanamadı.'
+      setManualMealError(message)
+      reportException({ source: 'api', severity: 'error', message, stack: error instanceof Error ? error.stack : undefined, context: { action: 'estimateManualMeal' } })
+    } finally { setIsEstimatingMeal(false) }
+  }
+
+  function saveManualEstimate() {
+    if (!manualMealEstimate) return
+    onAddManualMeal({ id: createId(), type: manualMealType, name: manualMealEstimate.meal_name, calories: manualMealEstimate.total_calories })
+    setManualMealName(''); setManualMealAmount(''); setManualMealUnit('gram'); setManualMealError(''); setManualMealEstimate(null); onCloseMealDetail()
   }
 
   return <>
@@ -350,7 +368,7 @@ function TodayPage({ profile, water, meals, dailyRecords, recordedDates, selecte
       </div>
     </section>
     <button className="tracker-card meal-entry" type="button" onClick={onOpenMealDetail} aria-haspopup="dialog"><span className="tracker-icon"><Utensils size={22} /></span><div><p>Beslenme</p><strong>Öğün gir</strong><small>{meals.length ? `${meals.length} öğün kaydedildi` : 'Fotoğrafla veya manuel ekle'}</small></div><span className="meal-entry-plus"><Plus size={20} /></span></button>
-    {isMealDetailOpen ? <div className="meal-sheet-backdrop" role="presentation" onClick={onCloseMealDetail}><section className="meal-sheet" role="dialog" aria-modal="true" aria-labelledby="meal-sheet-title" onClick={(event) => event.stopPropagation()}><div className="meal-sheet-handle" /><header className="meal-sheet-header"><div><p>Yeni kayıt</p><h2 id="meal-sheet-title">Öğün ekle</h2></div><button className="sheet-close" type="button" onClick={onCloseMealDetail} aria-label="Öğün panelini kapat"><X size={20} /></button></header><MealTypePicker value={manualMealType} onChange={setManualMealType} /><button className="photo-action" type="button" onClick={onAddPhoto}><span className="sheet-option-icon"><Camera size={22} /></span><span><strong>Fotoğrafla ekle</strong><small>{lastPhotoName || 'Kamera veya galeriden seç'}</small></span></button><div className="detail-divider"><span>Manuel giriş</span></div><form className="manual-meal-form" onSubmit={(event) => { event.preventDefault(); commitManualMeal() }}><label><span>Ne yedin?</span><input autoFocus value={manualMealName} onChange={(event) => { setManualMealName(event.target.value); setManualMealError('') }} placeholder="Örn. Tavuklu salata" /></label><label><span>Kalori <small>(isteğe bağlı)</small></span><input inputMode="numeric" min="0" type="number" value={manualMealCalories} onChange={(event) => setManualMealCalories(event.target.value)} placeholder="0" /></label>{manualMealError ? <p className="meal-form-error" role="alert">{manualMealError}</p> : null}<button className="primary-action compact" type="button" onClick={commitManualMeal}><Plus size={18} /> Öğünü kaydet</button></form></section></div> : null}
+    {isMealDetailOpen ? <div className="meal-sheet-backdrop" role="presentation" onClick={onCloseMealDetail}><section className="meal-sheet" role="dialog" aria-modal="true" aria-labelledby="meal-sheet-title" onClick={(event) => event.stopPropagation()}><div className="meal-sheet-handle" /><header className="meal-sheet-header"><div><p>Yeni kayıt</p><h2 id="meal-sheet-title">Öğün ekle</h2></div><button className="sheet-close" type="button" onClick={onCloseMealDetail} aria-label="Öğün panelini kapat"><X size={20} /></button></header><MealTypePicker value={manualMealType} onChange={setManualMealType} /><button className="photo-action" type="button" onClick={onAddPhoto}><span className="sheet-option-icon"><Camera size={22} /></span><span><strong>Fotoğrafla ekle</strong><small>{lastPhotoName || 'Kamera veya galeriden seç'}</small></span></button><div className="detail-divider"><span>Manuel giriş</span></div><form className="manual-meal-form" onSubmit={(event) => { event.preventDefault(); void commitManualMeal() }}><label className="manual-meal-name"><span>Ne yedin?</span><input autoFocus value={manualMealName} onChange={(event) => { setManualMealName(event.target.value); setManualMealError(''); setManualMealEstimate(null) }} placeholder="Örn. Tavuk pilav" /></label><label><span>Miktar</span><input inputMode="decimal" min="0" step="0.1" type="number" value={manualMealAmount} onChange={(event) => { setManualMealAmount(event.target.value); setManualMealError(''); setManualMealEstimate(null) }} placeholder="250" /></label><label><span>Birim</span><select value={manualMealUnit} onChange={(event) => { setManualMealUnit(event.target.value); setManualMealEstimate(null) }}><option value="gram">gram</option><option value="adet">adet</option><option value="porsiyon">porsiyon</option><option value="kase">kase</option><option value="bardak">bardak</option></select></label>{manualMealError ? <p className="meal-form-error" role="alert">{manualMealError}</p> : null}{manualMealEstimate ? <div className="manual-calorie-estimate"><div><span>{manualMealEstimate.source === 'cache' ? 'Kayıtlı kalori' : 'Tahmini kalori'}</span><strong>{manualMealEstimate.total_calories} kcal</strong><small>{manualMealEstimate.calorie_min}-{manualMealEstimate.calorie_max} kcal aralığı · %{manualMealEstimate.confidence} güven</small></div><p>{manualMealEstimate.feedback}</p><button className="primary-action compact" type="button" onClick={saveManualEstimate}><CheckCircle2 size={18} /> Uygun, kaydet</button><button className="secondary-action compact" type="button" onClick={() => setManualMealEstimate(null)}>Düzenle</button></div> : <button className="primary-action compact" type="button" onClick={() => void commitManualMeal()} disabled={isEstimatingMeal}>{isEstimatingMeal ? 'Hesaplanıyor...' : <><Sparkles size={18} /> Kaloriyi hesapla</>}</button>}</form></section></div> : null}
     <section className="today-meals" aria-label="Seçili günün öğünleri"><div className="section-title"><h2>Günün öğünleri</h2><span>{meals.length} kayıt</span></div>{meals.map((meal) => <MealCard key={meal.id} meal={meal} />)}{!meals.length ? <p className="empty-state">Bu tarihte öğün kaydı yok.</p> : null}</section>
     <section className="tracker-card water" aria-label="Su takibi"><span className="tracker-icon"><Droplets size={22} /></span><div className="water-summary"><p>Su takibi</p><strong>{(water / 1000).toFixed(1)} / 2.5 L</strong><div className="water-progress"><span style={{ width: `${Math.min((water / 2500) * 100, 100)}%` }} /></div></div><div className="water-actions"><button type="button" onClick={onRemoveWater} disabled={water === 0} aria-label="250 mililitre su azalt">−</button><button type="button" onClick={onAddWater} aria-label="250 mililitre su ekle">+</button><small>250 ml</small></div></section>
     <button className="food-advisor-card" type="button" onClick={onOpenAssistant}><span className="food-advisor-icon"><Sparkles size={21} /></span><span><strong>Ne yesem?</strong><small>Hedefine ve bugünkü kayıtlarına göre öneri al</small></span><ChevronRight size={20} /></button>
@@ -492,6 +510,36 @@ function createId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 function suggestMealType() { const hour = new Date().getHours(); if (hour < 11) return 'Kahvaltı'; if (hour < 15) return 'Öğle yemeği'; if (hour < 18) return 'Ara öğün'; return 'Akşam yemeği' }
+async function estimateManualMealCalories({ name, amount, unit, profile }: { name: string; amount: number; unit: string; profile: Profile }): Promise<ManualMealEstimate> {
+  try {
+    const response = await fetch('/api/estimate-meal-calories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, amount, unit, profile }) })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || 'Kalori hesaplanamadı.')
+    return data.estimate
+  } catch {
+    return estimateManualMealCaloriesLocally(name, amount, unit)
+  }
+}
+function estimateManualMealCaloriesLocally(name: string, amount: number, unit: string): ManualMealEstimate {
+  const normalized = name.toLocaleLowerCase('tr-TR')
+  const table = [
+    { keys: ['pilav', 'makarna', 'pasta'], kcal: 150 },
+    { keys: ['tavuk', 'hindi'], kcal: 165 },
+    { keys: ['köfte', 'kofte', 'et'], kcal: 240 },
+    { keys: ['balık', 'balik', 'somon'], kcal: 190 },
+    { keys: ['yumurta'], kcal: 155 },
+    { keys: ['yoğurt', 'yogurt'], kcal: 60 },
+    { keys: ['salata', 'sebze'], kcal: 45 },
+    { keys: ['çorba', 'corba'], kcal: 55 },
+    { keys: ['ekmek'], kcal: 265 },
+    { keys: ['meyve', 'elma', 'muz'], kcal: 80 },
+  ]
+  const match = table.find((item) => item.keys.some((key) => normalized.includes(key)))
+  const kcalPer100 = match?.kcal || 140
+  const gramAmount = unit === 'gram' ? amount : unit === 'adet' ? amount * 80 : unit === 'bardak' ? amount * 200 : amount * 180
+  const total = Math.max(20, Math.round((gramAmount / 100) * kcalPer100))
+  return { meal_name: `${name} (${amount} ${unit})`, portion: `${amount} ${unit}`, unit, total_calories: total, calorie_min: Math.round(total * 0.82), calorie_max: Math.round(total * 1.18), confidence: match ? 68 : 45, feedback: match ? 'Yerel besin tablosuna göre hızlı bir tahmin hazır.' : 'AI bağlantısı yoksa genel ortalama ile tahmin yapıldı; emin değilsen porsiyonu düzenle.', source: 'local' }
+}
 function fileToDataUrl(file: File) { return new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Fotoğraf okunamadı.')); reader.onerror = () => reject(new Error('Fotoğraf okunamadı.')); reader.readAsDataURL(file) }) }
 async function prepareMealImage(file: File) {
   const source = await fileToDataUrl(file)

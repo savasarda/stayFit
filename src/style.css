@@ -375,7 +375,7 @@ button { font: inherit; }
 
 .manual-meal-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 110px;
+  grid-template-columns: minmax(0, 1fr) 96px 112px;
   gap: 10px;
   margin: 0 0 10px;
   padding: 14px;
@@ -396,7 +396,8 @@ button { font: inherit; }
   font-weight: 900;
 }
 
-.manual-meal-form input {
+.manual-meal-form input,
+.manual-meal-form select {
   width: 100%;
   min-height: 46px;
   border: 1px solid rgba(31, 39, 33, 0.11);
@@ -409,13 +410,62 @@ button { font: inherit; }
   outline: none;
 }
 
-.manual-meal-form input:focus {
+.manual-meal-form select {
+  appearance: none;
+}
+
+.manual-meal-form input:focus,
+.manual-meal-form select:focus {
   border-color: rgba(29, 77, 63, 0.48);
   box-shadow: 0 0 0 4px rgba(29, 77, 63, 0.10);
 }
 
+.manual-meal-name {
+  grid-column: 1 / -1;
+}
+
 .manual-meal-form .primary-action {
   grid-column: 1 / -1;
+}
+
+.manual-calorie-estimate {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid rgba(138, 163, 31, 0.22);
+  border-radius: 14px;
+  background: #f7faed;
+}
+
+.manual-calorie-estimate > div {
+  display: grid;
+  gap: 4px;
+}
+
+.manual-calorie-estimate strong {
+  color: #202521;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.manual-calorie-estimate small,
+.manual-calorie-estimate p {
+  margin: 0;
+  color: #6d756f;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.secondary-action.compact {
+  min-height: 44px;
+  border: 1px solid #dfe4dc;
+  border-radius: 13px;
+  color: #515952;
+  background: #ffffff;
+  font-weight: 900;
+  cursor: pointer;
 }
 
 .primary-action.compact {
