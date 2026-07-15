@@ -1674,7 +1674,12 @@ button { font: inherit; }
 .history-header button,
 .profile-settings-sheet header button { display: grid; place-items: center; width: 40px; height: 40px; border: 0; color: #202521; background: transparent; cursor: pointer; }
 
-.assistant-history-list { display: grid; gap: 10px; max-height: calc(82svh - 88px); overflow-y: auto; padding-bottom: 10px; }
+.assistant-history-days { display: flex; gap: 8px; overflow-x: auto; padding: 0 0 12px; }
+.assistant-history-days button { min-width: 104px; display: grid; gap: 3px; padding: 10px 12px; border: 1px solid #dde1db; border-radius: 10px; color: #5b635e; background: #ffffff; text-align: left; cursor: pointer; }
+.assistant-history-days button.active { border-color: #dce95f; color: #171a18; background: #f3fad4; }
+.assistant-history-days strong { font-size: 12px; }
+.assistant-history-days small { color: #8b918d; font-size: 10px; font-weight: 800; }
+.assistant-history-list { display: grid; gap: 10px; max-height: calc(82svh - 150px); overflow-y: auto; padding-bottom: 10px; }
 .assistant-history-item { padding: 12px 13px; border-radius: 8px; border: 1px solid #e2e5df; background: #ffffff; }
 .assistant-history-item.user { border-color: #cbded4; background: #eef6f2; }
 .assistant-history-item span { display: block; margin-bottom: 6px; color: #79817c; font-size: 9px; font-weight: 900; }

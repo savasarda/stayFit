@@ -369,7 +369,9 @@ function AssistantPage({ profile, meals, water, messages, onSaveMessage }: { pro
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const welcomeMessage: ChatMessage = { id: 'welcome', from: 'assistant', text: 'Ben Tatliş Şef. Bugünkü öğünlerin, su tüketimin, hedeflerin ve hatırladığım tercihlere göre sana net öneriler verebilirim.' }
-  const visibleMessages = messages.length ? messages : [welcomeMessage]
+  const todayKey = toDateInputValue(new Date())
+  const todayMessages = messages.filter((item) => getChatDayKey(item) === todayKey)
+  const visibleMessages = todayMessages.length ? todayMessages : [welcomeMessage]
 
   async function sendMessage(text = message) {
     const question = text.trim()
@@ -379,7 +381,7 @@ function AssistantPage({ profile, meals, water, messages, onSaveMessage }: { pro
     setError('')
     try {
       const userMessage = await onSaveMessage({ from: 'user', text: question })
-      const conversation = [...messages, userMessage]
+      const conversation = [...todayMessages, userMessage]
       const recentConversation = conversation.slice(-6).map((item) => `${item.from === 'user' ? 'Kullanıcı' : 'Asistan'}: ${item.text}`).join('\n')
       const response = await fetch('/api/ai-coach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: `${recentConversation}\n\nSon isteğe Tatliş Şef olarak konuşur gibi yanıt ver. Öğün çok/az/dengesiz görünüyorsa söyle, pratik bir sonraki adım öner.`, profile: { ...profile, meals, water } }) })
       const data = await response.json()
@@ -396,8 +398,12 @@ function AssistantPage({ profile, meals, water, messages, onSaveMessage }: { pro
 }
 
 function AssistantHistorySheet({ messages, onClose }: { messages: ChatMessage[]; onClose: () => void }) {
-  const history = messages.slice().reverse()
-  return <div className="assistant-history-backdrop" role="presentation" onClick={onClose}><section className="assistant-history-sheet" role="dialog" aria-modal="true" aria-labelledby="assistant-history-title" onClick={(event) => event.stopPropagation()}><div className="meal-sheet-handle" /><header><div><h2 id="assistant-history-title">Tatliş Şef geçmişi</h2><p>Önceki tarif ve önerilere buradan dönebilirsin.</p></div><button type="button" onClick={onClose} aria-label="Tatliş Şef geçmişini kapat"><X size={22} /></button></header><div className="assistant-history-list">{history.length ? history.map((item) => <article className={item.from === 'user' ? 'assistant-history-item user' : 'assistant-history-item assistant'} key={item.id}><span>{item.from === 'user' ? 'Sen' : 'Tatliş Şef'}{item.createdAt ? ` · ${formatChatTime(item.createdAt)}` : ''}</span><p>{item.text}</p></article>) : <p className="empty-state">Henüz kayıtlı konuşma yok.</p>}</div></section></div>
+  const todayKey = toDateInputValue(new Date())
+  const dayGroups = useMemo(() => buildChatDayGroups(messages), [messages])
+  const [selectedDay, setSelectedDay] = useState(todayKey)
+  const selectedGroup = dayGroups.find((group) => group.key === selectedDay)
+  const selectedMessages = selectedGroup?.messages.slice().reverse() || []
+  return <div className="assistant-history-backdrop" role="presentation" onClick={onClose}><section className="assistant-history-sheet" role="dialog" aria-modal="true" aria-labelledby="assistant-history-title" onClick={(event) => event.stopPropagation()}><div className="meal-sheet-handle" /><header><div><h2 id="assistant-history-title">Tatliş Şef geçmişi</h2><p>Bugünün konuşması açık gelir, önceki günlere buradan dönebilirsin.</p></div><button type="button" onClick={onClose} aria-label="Tatliş Şef geçmişini kapat"><X size={22} /></button></header><div className="assistant-history-days" aria-label="Konuşma günleri">{dayGroups.map((group) => <button className={group.key === selectedDay ? 'active' : ''} type="button" key={group.key} onClick={() => setSelectedDay(group.key)}><strong>{group.label}</strong><small>{group.messages.length} mesaj</small></button>)}</div><div className="assistant-history-list">{selectedMessages.length ? selectedMessages.map((item) => <article className={item.from === 'user' ? 'assistant-history-item user' : 'assistant-history-item assistant'} key={item.id}><span>{item.from === 'user' ? 'Sen' : 'Tatliş Şef'}{item.createdAt ? ` · ${formatChatTimeOnly(item.createdAt)}` : ''}</span><p>{item.text}</p></article>) : <p className="empty-state">Bugün için kayıtlı konuşma yok.</p>}</div></section></div>
 }
 
 function HistorySheet({ dailyRecords, selectedDate, onClose, onSelect }: { dailyRecords: DailyRecords; selectedDate: string; onClose: () => void; onSelect: (date: string) => void }) {
@@ -432,10 +438,38 @@ function parseDateInputValue(value: string) { const [year, month, day] = value.s
 function formatHeaderDate(date: Date) { return headerDateFormatter.format(date).toLocaleUpperCase('tr-TR') }
 function formatShortDay(date: Date) { return shortDayFormatter.format(date).slice(0, 2).toLocaleUpperCase('tr-TR') }
 function formatLongDate(date: Date) { const value = date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' }); return value.charAt(0).toLocaleUpperCase('tr-TR') + value.slice(1) }
-function formatChatTime(value: string) {
+function formatChatTimeOnly(value: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' }) + ' ' + date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+  return date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+}
+function getChatDayKey(message: ChatMessage) {
+  if (!message.createdAt) return 'undated'
+  const date = new Date(message.createdAt)
+  if (Number.isNaN(date.getTime())) return 'undated'
+  return toDateInputValue(date)
+}
+function formatChatDayLabel(key: string) {
+  if (key === 'undated') return 'Tarihsiz'
+  const todayKey = toDateInputValue(new Date())
+  const yesterday = new Date()
+  yesterday.setDate(yesterday.getDate() - 1)
+  if (key === todayKey) return 'Bugün'
+  if (key === toDateInputValue(yesterday)) return 'Dün'
+  return formatLongDate(parseDateInputValue(key))
+}
+function buildChatDayGroups(messages: ChatMessage[]) {
+  const grouped = new Map<string, ChatMessage[]>()
+  grouped.set(toDateInputValue(new Date()), [])
+  for (const message of messages) {
+    const key = getChatDayKey(message)
+    grouped.set(key, [...(grouped.get(key) || []), message])
+  }
+  return Array.from(grouped.entries()).map(([key, groupMessages]) => ({ key, label: formatChatDayLabel(key), messages: groupMessages })).sort((first, second) => {
+    if (first.key === 'undated') return 1
+    if (second.key === 'undated') return -1
+    return second.key.localeCompare(first.key)
+  })
 }
 function mergeCoachMemory(current: string[] = [], updates: string[] = []) {
   const cleaned = updates.map((item) => item.trim()).filter(Boolean)
