@@ -199,8 +199,8 @@ app.post('/api/estimate-meal-calories', async (request, response) => {
     })
 
     const estimate = { ...JSON.parse(aiResponse.output_text), source: 'api' }
-    await saveSharedCalorieEstimate(cacheKey, { name, amount: numericAmount, unit, estimate })
-    response.json({ estimate })
+    const cacheResult = await saveSharedCalorieEstimate(cacheKey, { name, amount: numericAmount, unit, estimate })
+    response.json({ estimate, cache_saved: cacheResult.ok, cache_error: cacheResult.error || null })
   } catch (error) {
     console.error('Manual meal estimate error:', error)
     await writeException(normalizeException({
@@ -212,8 +212,8 @@ app.post('/api/estimate-meal-calories', async (request, response) => {
     }, request)).catch((logError) => console.error('Manual estimate error could not be logged:', logError))
     if (error?.code === 'insufficient_quota' || error?.status === 429) return response.status(402).json({ error: 'OpenAI API kotası veya billing aktif değil.' })
     const fallback = estimateMealCaloriesLocally(name, numericAmount, unit)
-    await saveSharedCalorieEstimate(cacheKey, { name, amount: numericAmount, unit, estimate: fallback })
-    response.json({ estimate: fallback })
+    const cacheResult = await saveSharedCalorieEstimate(cacheKey, { name, amount: numericAmount, unit, estimate: fallback })
+    response.json({ estimate: fallback, cache_saved: cacheResult.ok, cache_error: cacheResult.error || null })
   }
 })
 
@@ -266,8 +266,7 @@ async function touchSharedCalorieEstimate(client, cacheKey, useCount) {
 
 async function saveSharedCalorieEstimate(cacheKey, { name, amount, unit, estimate }) {
   const client = supabaseAdmin || supabase
-  if (!client) return false
-  const now = new Date().toISOString()
+  if (!client) return { ok: false, error: 'Supabase client is not configured' }
   const payload = {
     cache_key: cacheKey,
     food_name: String(name).trim(),
@@ -281,12 +280,7 @@ async function saveSharedCalorieEstimate(cacheKey, { name, amount, unit, estimat
     confidence: estimate.confidence,
     feedback: estimate.feedback || '',
     source: estimate.source === 'local' ? 'local' : 'api',
-    updated_at: now,
-    last_used_at: now,
   }
-  const { error } = await client.from('shared_calorie_estimates').upsert(payload, { onConflict: 'cache_key' })
-  if (!error) return true
-
   const rpcResult = await client.rpc('upsert_shared_calorie_estimate', {
     p_cache_key: cacheKey,
     p_food_name: payload.food_name,
@@ -302,10 +296,10 @@ async function saveSharedCalorieEstimate(cacheKey, { name, amount, unit, estimat
     p_source: payload.source,
   })
   if (rpcResult.error) {
-    console.warn('Shared calorie estimate write failed:', error.message, rpcResult.error.message)
-    return false
+    console.warn('Shared calorie estimate write failed:', rpcResult.error.message)
+    return { ok: false, error: rpcResult.error.message }
   }
-  return true
+  return { ok: true }
 }
 
 function estimateMealCaloriesLocally(name, amount, unit) {

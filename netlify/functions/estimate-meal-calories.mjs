@@ -17,8 +17,8 @@ export default async (request) => {
   const openai = getOpenAI()
   if (!openai) {
     const fallback = estimateMealCaloriesLocally(name, numericAmount, unit)
-    await saveSharedCalorieEstimate(cacheKey, { name, amount: numericAmount, unit, estimate: fallback })
-    return json({ estimate: fallback })
+    const cacheResult = await saveSharedCalorieEstimate(cacheKey, { name, amount: numericAmount, unit, estimate: fallback })
+    return json({ estimate: fallback, cache_saved: cacheResult.ok, cache_error: cacheResult.error || null })
   }
 
   try {
@@ -50,13 +50,13 @@ export default async (request) => {
       max_output_tokens: 500,
     })
     const estimate = { ...JSON.parse(aiResponse.output_text), source: 'api' }
-    await saveSharedCalorieEstimate(cacheKey, { name, amount: numericAmount, unit, estimate })
-    return json({ estimate })
+    const cacheResult = await saveSharedCalorieEstimate(cacheKey, { name, amount: numericAmount, unit, estimate })
+    return json({ estimate, cache_saved: cacheResult.ok, cache_error: cacheResult.error || null })
   } catch (error) {
     await saveException(normalizeException({ source: 'api', severity: 'error', message: error instanceof Error ? error.message : 'Manuel öğün kalori hesaplama hatası', stack: error instanceof Error ? error.stack : undefined, context: { route: '/api/estimate-meal-calories' } }, request))
     const fallback = estimateMealCaloriesLocally(name, numericAmount, unit)
-    await saveSharedCalorieEstimate(cacheKey, { name, amount: numericAmount, unit, estimate: fallback })
-    return json({ estimate: fallback })
+    const cacheResult = await saveSharedCalorieEstimate(cacheKey, { name, amount: numericAmount, unit, estimate: fallback })
+    return json({ estimate: fallback, cache_saved: cacheResult.ok, cache_error: cacheResult.error || null })
   }
 }
 
@@ -103,8 +103,7 @@ async function touchSharedCalorieEstimate(supabase, cacheKey, useCount) {
 
 async function saveSharedCalorieEstimate(cacheKey, { name, amount, unit, estimate }) {
   const supabase = getSupabase(true)
-  if (!supabase) return false
-  const now = new Date().toISOString()
+  if (!supabase) return { ok: false, error: 'Supabase client is not configured' }
   const payload = {
     cache_key: cacheKey,
     food_name: String(name).trim(),
@@ -118,11 +117,7 @@ async function saveSharedCalorieEstimate(cacheKey, { name, amount, unit, estimat
     confidence: estimate.confidence,
     feedback: estimate.feedback || '',
     source: estimate.source === 'local' ? 'local' : 'api',
-    updated_at: now,
-    last_used_at: now,
   }
-  const { error } = await supabase.from('shared_calorie_estimates').upsert(payload, { onConflict: 'cache_key' })
-  if (!error) return true
   const rpcResult = await supabase.rpc('upsert_shared_calorie_estimate', {
     p_cache_key: cacheKey,
     p_food_name: payload.food_name,
@@ -137,7 +132,7 @@ async function saveSharedCalorieEstimate(cacheKey, { name, amount, unit, estimat
     p_feedback: payload.feedback,
     p_source: payload.source,
   })
-  return !rpcResult.error
+  return rpcResult.error ? { ok: false, error: rpcResult.error.message } : { ok: true }
 }
 
 function estimateMealCaloriesLocally(name, amount, unit) {
