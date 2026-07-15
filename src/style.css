@@ -1405,6 +1405,16 @@ button { font: inherit; }
   background: #e8f1ec;
 }
 
+.photo-action-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.photo-action.secondary {
+  background: #eef2ed;
+  border-color: #dde5de;
+}
+
 .photo-action small { color: #788b82; }
 
 .manual-meal-form input,
