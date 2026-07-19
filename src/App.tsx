@@ -684,6 +684,8 @@ function App() {
           {activeTab === "assistant" ? (
             <AssistantPage
               profile={profile}
+              dailyRecords={dailyRecords}
+              selectedDate={selectedDate}
               meals={meals}
               water={water}
               messages={assistantMessages}
@@ -2194,12 +2196,16 @@ function ProgressPage({
 
 function AssistantPage({
   profile,
+  dailyRecords,
+  selectedDate,
   meals,
   water,
   messages,
   onSaveMessage,
 }: {
   profile: Profile;
+  dailyRecords: DailyRecords;
+  selectedDate: string;
   meals: Meal[];
   water: number;
   messages: ChatMessage[];
@@ -2232,20 +2238,28 @@ function AssistantPage({
     setError("");
     try {
       const userMessage = await onSaveMessage({ from: "user", text: question });
-      const conversation = [...todayMessages, userMessage];
+      const conversation = [...messages, userMessage];
       const recentConversation = conversation
-        .slice(-6)
+        .slice(-12)
         .map(
           (item) =>
-            `${item.from === "user" ? "Kullanıcı" : "Asistan"}: ${item.text}`,
+            `${item.createdAt ? `[${item.createdAt}] ` : ""}${item.from === "user" ? "Kullanıcı" : "Asistan"}: ${item.text}`,
         )
         .join("\n");
+      const nutritionHistory = buildAssistantNutritionHistory(dailyRecords);
       const response = await fetch("/api/ai-coach", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: `${recentConversation}\n\nSon isteğe Tatliş Şef olarak konuşur gibi yanıt ver. Öğün çok/az/dengesiz görünüyorsa söyle, pratik bir sonraki adım öner.`,
-          profile: { ...profile, meals, water },
+          profile: {
+            ...profile,
+            todayDate: toDateInputValue(new Date()),
+            selectedDate,
+            meals,
+            water,
+            dailyHistory: nutritionHistory,
+          },
         }),
       });
       const data = await response.json();
@@ -3128,6 +3142,28 @@ function buildChatDayGroups(messages: ChatMessage[]) {
       if (second.key === "undated") return -1;
       return second.key.localeCompare(first.key);
     });
+}
+function buildAssistantNutritionHistory(dailyRecords: DailyRecords) {
+  return Object.entries(dailyRecords)
+    .filter(([, record]) => record.water > 0 || record.meals.length > 0)
+    .sort(([firstDate], [secondDate]) => secondDate.localeCompare(firstDate))
+    .slice(0, 90)
+    .map(([date, record]) => ({
+      date,
+      totalCalories: record.meals.reduce(
+        (total, meal) => total + meal.calories,
+        0,
+      ),
+      waterMl: record.water,
+      meals: record.meals.map((meal) => ({
+        type: meal.type,
+        name: meal.name,
+        calories: meal.calories,
+        protein: meal.protein || 0,
+        carbs: meal.carbs || 0,
+        fat: meal.fat || 0,
+      })),
+    }));
 }
 function mergeCoachMemory(current: string[] = [], updates: string[] = []) {
   const cleaned = updates.map((item) => item.trim()).filter(Boolean);
